@@ -1,0 +1,183 @@
+|-----------------------------------------------------------------------------|
+|-----------------------------------------------------------------------------|
+|                                   v0.0.2                                    |
+|-----------------------------------------------------------------------------|
+|-----------------------------------------------------------------------------|
+Data de publicação: 14/03/2023
+Projeto Optimus Sun v0.0.2
+
+1. Cadastro dos inversores: R75, R100, R110, T8(Dual), T10(Dual), T12(Dual),
+T15(Dual)
+
+
+Autor: Pedro Akio Sakuma
+|-----------------------------------------------------------------------------|
+|-----------------------------------------------------------------------------|
+|                                   v0.0.1                                    |
+|-----------------------------------------------------------------------------|
+|-----------------------------------------------------------------------------|
+
+Data de publicação: 02/02/2023
+Projeto Optimus Sun v0.0.1
+
+Correções de funcionalidade
+
+1. O cálculo para a quantidade de strings por MPPT agora é limitado pela quan-
+tidade de strings por MPPT. Agora também é calculado a partir da corrente
+máxima da string na temperatura máxima ao invés de ser calculada pela corrente
+de curto-circuito.
+2. O calculo de quantidade de módulos por string, mínima e máxima, agora leva
+em consideração as tensões em aberto do inversor e módulos.
+
+      Partida e Operação
+• É calculado a quantidade máxima de módulos em operação e em aberto. Daí é
+escolhido o valor menor
+• É calculado a quantidade mínima de módulos em operação e em aberto, Daí é
+escolhido o valor maior
+
+      Full Load
+• É calculado a quantidade máxima de módulos em Full Load. Daí se compara com
+a quantidade máxima de módulos em operação. É escolhido o valor menor entre
+ambos
+• É calculado a quantidade mínima de módulos em Full Load. Daí se compara com
+a quantidade mínima de módulos em operação. É escolhido o valor maior entre
+ambos
+
+3. Definição de nome do projeto para Optimus Sun
+4. Cadastro dos inversores: SUN2000-196KTL-H0, SUN2000-200KTL-H2,
+SUN2000-215KTL-H0
+
+Autor: Pedro Akio Sakuma
+|-----------------------------------------------------------------------------|
+|-----------------------------------------------------------------------------|
+|                                   v0.0.0                                    |
+|-----------------------------------------------------------------------------|
+|-----------------------------------------------------------------------------|
+
+Data de publicação: 02/02/2023
+Planilha MODULOS E INVERSORES - v0.0.0
+
+Recursos:
+Selecione um modelo de módulo e um modelo de inversor, para que sejam forneci-
+das as informações da quantidade de módulos colocados por string e a quantidade
+máxima de strings por MPPT conectadas. Os calculos levam em consideração os
+dados disponibilizados no manual dos equipamentos e datasheets dos módulos e
+temperatura
+
+
+1. Cadastro dos módulos Trina, Risen, Sunova, Talesun, Jinko, Astronergy, util-
+izados pela empresa até o momento, de que se tem registros. As potências variam
+de 325W até o mais atual, 595W
+2. Cadastro dos inversores PHB, Goodwe, Huawei e FoxEss. Nem todos os registros
+dos inversores PHB conferem com os inversores utilizados na época, pois os
+manuais foram atualizados e não estão mais disponíveis. A potência dos
+inversores variam de 700W a 200kW até os dias atuais
+3. Os cálculos de tensão e corrente levam em consideração tensão do módulo em
+aberto, tensão em potência máxima, corrente de curto-circtuo, corrente de ope-
+ração máxima, etc.
+
+Fonte de dados:
+Dados dos módulos coletados do datasheet (anexos na pasta): 
+• Modelo
+• Fabricante
+• Face (Bifacial ou Monofacial)
+• Estrutura Cristilina (Monocristalino ou Policristalino)
+• Comprimento
+• Largura
+• Altura
+• Peso
+• Potência Nominal
+• Tensão de circuito aberto (Voc)
+• Tensão em máxima potência (Vpmax)
+• Corrente de curto circuito (Isc)
+• Corrente em máxima potência (Ipmax)
+• Coeficiente de temperatura de potência nominal
+• Coeficiente de temperatura de tensão de circuito aberto
+• Coeficiente de temperatura de corrente de curto circuito
+
+Modelos cadastrados: CHSM72M-HC-405, CHSM72M-HC-410, CHSM72M-HC-415,
+CHSM72M-HC-420, BYD335PIK-36, BYD340PIK-36, BYD345PIK-36, BYD350PIK-36,
+TSM-390DE09, TSM-395DE09, TSM-400DE09, TSM-405DE09, TSM-485DE18, TSM-490DE18,
+TSM-495DE18, TSM-500DE18, TSM-505DE18, TSM-510DE18, TSM-525DEG19C.20,
+TSM-530DEG19C.20, TSM-535DEG19C.20, TSM-540DEG19C.20, TSM-545DEG19C.20,
+TSM-550DEG19C.20, RSM120-8-585BMGD, RSM120-8-590BMGD, RSM120-8-595BMGD,
+RSM120-8-600BMGD, RSM120-8-605BMGD, CHSM72M-HC-525, CHSM72M-HC-530,
+CHSM72M-HC-535, CHSM72M-HC-540, CHSM72M-HC-545, BYD325-P6K-36-5B,
+BYD330-P6K-36-5B, BYD335-P6K-36-5B, BYD340-P6K-36-5B, JKM320PP-72,
+JKM325PP-72, JKM330PP-72, JKM335PP-72, JKM340PP-72, RSM144-6-330P,
+RSM144-6-335P, RSM144-6-340P, RSM144-6-345P, CHSM6612P-330, CHSM6612P-335,
+CHSM6612P-340, CHSM6612P-345, TSM-340PE15H, TSM-345PE15H, TSM-350PE15H,
+TSM-355PE15H, TSM-390DE15M(II), TSM-395DE15M(II), TSM-400DE15M(II),
+TSM-405DE15M(II), TSM-410DE15M(II), TSM-415DE15M(II), BYD 520 MLK-36,
+BYD 525 MLK-36, BYD 530 MLK-36, BYD 535 MLK-36, BYD 540 MLK-36, RSM144-7-430M,
+RSM144-7-435M, RSM144-7-440M, RSM144-7-445M, RSM144-7-450M, RSM156-6-425M,
+RSM156-6-430M, RSM156-6-435M, RSM156-6-440M, RSM156-6-445M, SS-535-72MDH,
+SS-540-72MDH, SS-545-72MDH, SS-550-72MDH, TSM-430DE17M.TO(II),
+TSM-435DE17M.TO(II), TSM-440DE17M.TO(II), TSM-445DE17M.TO(II),
+TSM-450DE17M.TO(II), TP7F72M(H)-530, TP7F72M(H)-535, TP7F72M(H)-540,
+TP7F72M(H)-545, TP7F72M(H)-550, TSM-585DEG20C.20, TSM-590DEG20C.20,
+TSM-595DEG20C.20, TSM-600DEG20C.20, TSM-605DEG20C.20, SS-555-72MDH
+
+Módulos dos fabricantes Trina Solar, Jinko, Risen, Talesun, Sunova e BYD
+
+Dados dos inversores coletados dos manuais (anexos na pasta):
+• Modelo
+• Fabricante
+• Comprimento
+• Largura
+• Altura
+• Peso
+• Ventilação
+• Wifi
+• RS485
+• Display
+• Led
+• USB
+• Potência Nominal
+• Potência Máxima
+• Entradas por MPPT
+• Quantidade de MPPT
+• Tensão máxima de partida do MPPT
+• Tensão mínima de partida do MPPT
+• Tensão máxima de operação do MPPT
+• Tensão mínima de operação do MPPT
+• Tensão máxima FL (220Vac) do MPPT
+• Tensão mínima FL (220Vac) do MPPT
+• Tensão nominal de operação do MPPT
+• Corrente de curto cirtuito do MPPT
+• Corrente máxima de operação do MPPT
+• Monofásico / Bifásico
+• Trifásico 3 fios
+• Trifásico 4 fios
+• Tensão nominal máxima de saída
+• Tensão nominal mínima de saída
+• Corrente máxima de saída
+
+Modelos cadastrados: SUN2000L-2KTL, SUN2000L-3KTL, SUN2000L-3.68KTL,
+SUN2000L-4KTL, SUN2000L-4.6KTL, SUN2000L-5KTL, SUN2000-8KTL, SUN2000-10KTL,
+SUN2000-12KTL, SUN2000-15KTL, SUN2000-17KTL, SUN2000-20KTL, SUN2000-23KTL,
+SUN2000-28KTL, SUN2000-29.9KTL, SUN2000-33KTL-A, SUN2000-36KTL, SUN2000-42KTL,
+SUN2000-8KTL-M0, SUN2000-10KTL-M0, SUN2000-12KTL-M0, SUN2000-15KTL-M0,
+SUN2000-17KTL-M0, SUN2000-20KTL-M0, SUN2000-8KTL-M2, SUN2000-10KTL-M2,
+SUN2000-12KTL-M2, SUN2000-15KTL-M2, SUN2000-17KTL-M2, SUN2000-20KTL-M2,
+SUN2000-20KTL-M3, SUN2000-29.9KTL-M3, SUN2000-30KTL-M3, SUN2000-36KTL-M3,
+SUN2000-40KTL-M3, SUN2000-50KTL-M0, SUN2000-60KTL-M0, SUN2000-65KTL-M0,
+SUN2000-75KTL-M1, SUN2000-100KTL-M0, SUN2000-110KTL-M0, SUN2000-125KTL-M0,
+SUN2000-100KTL-M1, SUN2000-90KTL-H0, SUN2000-90KTL-H1, SUN2000-90KTL-H2,
+SUN2000-100KTL-H0, SUN2000-100KTL-H1, SUN2000-100KTL-H2, SUN2000-105KTL-H1,
+GW700-XS, GW1000-XS, GW1500-XS, GW2000-XS, GW2500-XS, GW3000-XS, GW3300-XS,
+GW2500N-XS, GW3000N-XS, GW75K-MT, GW5000-MS, GW6000-MS, GW7000-MS, GW8500-MS,
+GW10K-MS, GW2900D-NS, GW3000D-NS, GW3600D-NS, GW4200D-NS, GW5000D-NS,
+GW6000D-NS, GW3000T-DS, GW3600T-DS, GW4200T-DS, GW5000T-DS, GW6000T-DS, G7, G8,
+G9, G10, G10.5, T3, T4, T5, T6, T8, T10, T12, T15, T17, T20, T25, F3000, F3600,
+F4600, F5000, F5300, F6000, PHB1500-NS, PHB3000-NS, PHB5000D-NS, PHB14K-DT,
+PHB20K-DT, PHB25K-DT, PHB35K-MT, PHB50K-MT, PHB60K-MT
+
+Inversores dos fabricantes Huawei, Goodwe, PHB e FoxEss
+
+Base Matemática:
+
+
+Autor: Pedro Akio Sakuma
+|-----------------------------------------------------------------------------|
+|-----------------------------------------------------------------------------|
