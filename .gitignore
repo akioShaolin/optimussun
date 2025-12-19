@@ -1,0 +1,30 @@
+
+# Pastas de Manuais e Datasheets para consulta
+
+Manuais e Datasheets/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ambientes virtuais
+venv/
+.env/
+
+# Build / executável
+build/
+dist/
+*.spec
+
+# Logs
+*.log
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
