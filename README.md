@@ -2,6 +2,9 @@
 <p>
   O projeto <strong>Optimus Sun</strong> tem como objetivo auxiliar no <strong>dimensionamento de sistemas fotovoltaicos</strong>, relacionando modelos de inversores e módulos solares para verificar sua compatibilidade elétrica e operacional.
 </p>
+<p>
+  Projeto independente desenvolvido por <strong>Pedro Akio Sakuma</strong> e disponibilizado como software open source.
+</p>
 
 <h2>Descrição Geral</h2>
 <p>
@@ -34,7 +37,6 @@
   <li>Exportação automática de resultados para planilhas <strong>Excel</strong>.</li>
   <li>Inclusão de relatórios técnicos com observações sobre limitações de cada arranjo.</li>
   <li>Implementação de filtros para busca rápida de inversores e módulos.</li>
-  <li>Publicação do projeto como <strong>open source</strong> no GitHub.</li>
 </ul>
 
 <p>

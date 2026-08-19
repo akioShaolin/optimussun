@@ -17,6 +17,13 @@ venv/
 build/
 dist/
 *.spec
+*.exe
+
+# Bancos de dados locais
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
 
 # Logs
 *.log
