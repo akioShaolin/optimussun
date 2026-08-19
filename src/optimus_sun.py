@@ -1,15 +1,15 @@
-#inv_vs_mod_gui.py
+#optimus_sun.py
 #                                               ;   :   ;
 #                                            .   \_,!,_/   ,
 #                                             `.,'     `.,'
 #                                              /         \
 #                                        ~ -- :           : -- ~ 
-# _____       _   _                       _____          /           _____   _____  ______
-#|  _  |     | | (_)                     /  ___|                    / __  \ |____ ||___  /
-#| | | |_ __ | |_ _ _ __ ___  _   _ ___  \ `--. _   _ _ __   __   __`' / /'     / /   / / 
-#| | | | '_ \| __| | '_ ` _ \| | | / __|  `--. \ | | | '_ \  \ \ / /  / /       \ \  / /  
-#\ \_/ / |_) | |_| | | | | | | |_| \__ \ /\__/ / |_| | | | |  \ V / ./ /____.___/ /./ /   
-# \___/| .__/ \__|_|_| |_| |_|\__,_|___/ \____/ \__,_|_| |_|   \_/  \_____(_)____(_)_/    
+# _____       _   _                       _____          /           _____   _____   _____
+#|  _  |     | | (_)                     /  ___|                    / __  \ |____ | |  _  |
+#| | | |_ __ | |_ _ _ __ ___  _   _ ___  \ `--. _   _ _ __   __   __`' / /'     / / | |_| |
+#| | | | '_ \| __| | '_ ` _ \| | | / __|  `--. \ | | | '_ \  \ \ / /  / /       \ \ |  _  |
+#\ \_/ / |_) | |_| | | | | | | |_| \__ \ /\__/ / |_| | | | |  \ V / ./ /____.___/ / | |_| |
+# \___/| .__/ \__|_|_| |_| |_|\__,_|___/ \____/ \__,_|_| |_|   \_/  \_____(_)____(_) |_____|
 #      | |                                                                                
 #      |_|                                                                                                                                                                 
 #⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣶⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
@@ -1491,15 +1491,23 @@ def atualizar_aviso():
 
 ## Funções referentes ao funcionamento da janela ##
 
-def center_window(window, width, height, min_width=None, min_height=None):
-    """Dimensiona e centraliza uma janela sem ultrapassar a área útil da tela."""
+def center_window(
+    window,
+    width,
+    height,
+    min_width=None,
+    min_height=None,
+    vertical_offset=0,
+    screen_margin=100,
+):
+    """Dimensiona e posiciona uma janela sem ultrapassar a área útil da tela."""
     window.update_idletasks()
     screen_width = window.winfo_screenwidth()
     screen_height = window.winfo_screenheight()
     width = min(width, max(320, screen_width - 80))
-    height = min(height, max(240, screen_height - 100))
+    height = min(height, max(240, screen_height - screen_margin))
     x = max(0, (screen_width - width) // 2)
-    y = max(0, (screen_height - height) // 2)
+    y = max(0, (screen_height - height) // 2 + vertical_offset)
     window.geometry(f"{width}x{height}+{x}+{y}")
     window.minsize(min_width or min(width, 420), min_height or min(height, 320))
     window.resizable(True, True)
@@ -1557,7 +1565,7 @@ def add_chart_legend(ax, colors):
 
 
 # Exemplo de build a partir de src/; o banco permanece externo ao bundle.
-# pyinstaller --onedir --noconsole --icon=optimus_sun.ico --name "Optimus Sun 2.3.7" --add-data "optimus_sun.png;." --add-data "optimus_sun.ico;." optimus_sun.py
+# pyinstaller --onedir --noconsole --icon=optimus_sun.ico --name "Optimus Sun 2.3.8" --add-data "optimus_sun.png;." --add-data "optimus_sun.ico;." optimus_sun.py
 
 # Evento de fechamento da janela
 def on_close_all():
@@ -1598,9 +1606,17 @@ logo_path = resource_path("optimus_sun.png")
 # Criar interface Tkinter
 root = tk.Tk()
 root.iconbitmap(icon_path)
-root.title("Optimus Sun 2.3.7")
+root.title("Optimus Sun 2.3.8")
 root.configure(background=bg_c)
-center_window(root, 760, 680, min_width=680, min_height=600)
+center_window(
+    root,
+    820,
+    680,
+    min_width=680,
+    min_height=600,
+    vertical_offset=-50,
+    screen_margin=65,
+)
 
 icone = tk.PhotoImage(file=logo_path)
 
@@ -1636,7 +1652,7 @@ separador1 = ttk.Separator(root, orient="horizontal")         # Separador
 frame_qtd_mod_inv = tk.Frame(root, bg=bg_c)            # Informações de carga do inversor
 notebook = ttk.Notebook(root)                                 # Campos de Saída
 frame_img = tk.Frame(root, bg=bg_c)                    # Imagem do Optimus Sun
-rodape = ttk.Label(root, text="Optimus Sun 2.3.7 — Pedro Akio Sakuma © 2025–2026", anchor='e', font=("Arial", 8)) # Label fixo no rodapé
+rodape = ttk.Label(root, text="Optimus Sun 2.3.8 — Pedro Akio Sakuma © 2025–2026", anchor='e', font=("Arial", 8)) # Label fixo no rodapé
 
 frame_entrada.pack(fill="x", padx=24, pady=(12, 6))
 separador1.pack(fill='x', padx=10, pady=5)
@@ -1748,12 +1764,12 @@ print("""
                                              `.,'     `.,'
                                               /         \\
                                         ~ -- :           : -- ~ 
- _____       _   _                       _____                      _____   _____  ______
-|  _  |     | | (_)                     /  ___|                    / __  \\ |____ ||___  /
-| | | |_ __ | |_ _ _ __ ___  _   _ ___  \\ `--. _   _ _ __   __   __`' / /'     / /   / / 
-| | | | '_ \\| __| | '_ ` _ \\| | | / __|  `--. \\ | | | '_ \\  \\ \\ / /  / /       \\ \\  / /  
-\\ \\_/ / |_) | |_| | | | | | | |_| \\__ \\ /\\__/ / |_| | | | |  \\ V / ./ /____.___/ /./ /   
- \\___/| .__/ \\__|_|_| |_| |_|\\__,_|___/ \\____/ \\__,_|_| |_|   \\_/  \\_____(_)____(_)_/    
+ _____       _   _                       _____                      _____   _____   _____
+|  _  |     | | (_)                     /  ___|                    / __  \\ |____ | |  _  |
+| | | |_ __ | |_ _ _ __ ___  _   _ ___  \\ `--. _   _ _ __   __   __`' / /'     / / | |_| |
+| | | | '_ \\| __| | '_ ` _ \\| | | / __|  `--. \\ | | | '_ \\  \\ \\ / /  / /       \\ \\ |  _  |
+\\ \\_/ / |_) | |_| | | | | | | |_| \\__ \\ /\\__/ / |_| | | | |  \\ V / ./ /____.___/ / | |_| |
+ \\___/| .__/ \\__|_|_| |_| |_|\\__,_|___/ \\____/ \\__,_|_| |_|   \\_/  \\_____(_)____(_) |_____|
       | |                                                                                
       |_|                                                                                                                                                              
 """)

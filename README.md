@@ -2,9 +2,11 @@
 
 O **Optimus Sun** é um projeto independente desenvolvido por **Pedro Akio Sakuma** para auxiliar no dimensionamento de sistemas fotovoltaicos. A aplicação relaciona modelos de inversores e módulos solares, verifica sua compatibilidade elétrica e operacional e apresenta limites de operação para apoiar a análise do arranjo.
 
-**Versão atual: v2.3.7**
+**Versão atual: v2.3.8**
 
-A v2.3.7 é a primeira release pública formal do projeto distribuída com Git tags e GitHub Releases. Ela não é a primeira versão do software; versões anteriores permanecem preservadas no histórico do Git.
+A `v2.3.7` marcou a primeira release pública formal do Optimus Sun distribuída com Git tags e GitHub Releases. Ela não foi a primeira versão do software; versões anteriores permanecem preservadas no histórico do Git.
+
+A `v2.3.8` é uma release de estabilidade e interface, com correções nos cálculos de limites, melhorias no gerenciamento do banco de dados e das janelas auxiliares, testes automatizados e aprimoramentos visuais e de responsividade.
 
 ## Funcionalidades
 
@@ -84,6 +86,9 @@ optimussun/
 │   ├── cadastros_db_gui.py
 │   ├── optimus_sun.png
 │   └── optimus_sun.ico
+├── tests/
+│   ├── test_optimus_lib.py
+│   └── test_database_regression.py
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -93,6 +98,7 @@ optimussun/
 - `src/optimus_lib.py`: funções auxiliares de validação e cálculo.
 - `src/cadastros_db_gui.py`: interface administrativa do banco de dados.
 - `src/optimus_sun.png` e `src/optimus_sun.ico`: identidade visual e ícone da aplicação.
+- `tests/`: testes automatizados dos cálculos e regressão com o banco operacional local.
 - `optimus_sun.db`: banco operacional externo, necessário em runtime e não versionado.
 
 ## Arquitetura básica
