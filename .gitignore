@@ -1,6 +1,4 @@
-
 # Pastas de Manuais e Datasheets para consulta
-
 Manuais e Datasheets/
 
 # Python
@@ -11,7 +9,15 @@ __pycache__/
 
 # Ambientes virtuais
 venv/
+.venv/
+env/
 .env/
+
+# Testes
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
 
 # Build / executável
 build/
@@ -20,8 +26,9 @@ dist/
 *.exe
 
 # Bancos de dados locais
-*.db
 *.db-journal
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 
