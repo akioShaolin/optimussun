@@ -83,8 +83,8 @@
 #⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢿⣿⣿⣿⣿⡟⠉⢹⣿⣿⣿⣿⡿⠿⡾⠀⣿⡇⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⠰⠇⣿⣿⣿⣿⡿⣿⡇⠀
 #⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⡟⠛⠉⠁⠀⠀⠀⠙⠛⠉⠁⠀⠀⠁⠀⣛⣁⣿⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⢿⠟⣹⡇⢀⣙⣿⣯⡷⠿⠛⠁⠀
 #⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠉⠉⠉⠉⠉⠉⠹⠷⣦⣤⣤⣤⣤⣤⣤⣤⣤⣤⣶⣶⣶⡶⠶⠶⠶⠶⠾⠿⠛⠛⠋⠉⠉⠁⠀⠀⠀⠀⠀⠀
-#
-#                                                  "Em qualquer guerra, há calmas entre as tempestades." 
+# 
+#                                                   "Em qualquer guerra, há calma entre as tempestades." 
 #                                                                                        ~ Optimus Prime
 
 import sqlite3
@@ -1488,7 +1488,21 @@ def close_topLevels():
 
 # Endereço dos arquivos
 
-db_path = resource_path("optimus_sun.db")
+def resource_path(relative_path: str) -> str:
+    try:
+        base_path = Path(sys._MEIPASS)
+    except Exception:
+        base_path = Path(__file__).resolve().parent
+    return str((base_path / relative_path).resolve())
+
+def external_path(filename: str) -> str:
+    if getattr(sys, "frozen", False):
+        base_path = Path(sys.executable).resolve().parent
+    else:
+        base_path = Path(__file__).resolve().parent
+    return str((base_path / filename).resolve())
+
+db_path = external_path("optimus_sun.db")
 img_path = resource_path("logo.png")
 icon_path = resource_path("optimus_sun.ico")
 logo_path = resource_path("optimus_sun.png")
