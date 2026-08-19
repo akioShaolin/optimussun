@@ -93,6 +93,7 @@ import matplotlib.pyplot as plt
 import math
 import sys
 
+from contextlib import closing
 from pathlib import Path
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.ticker import MaxNLocator
@@ -100,10 +101,36 @@ from matplotlib.patches import Patch
 from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
 from functools import partial
-from optimus_lib import compensacao_termica, validar, vv, mppt_index_dec, formatar_tupla
+from optimus_lib import (
+    compensacao_termica,
+    formatar_tupla,
+    limite_strings_curto_circuito,
+    limite_strings_operacao,
+    limite_modulos_sobrecarga,
+    limites_modulos_serie,
+    minimo_valido,
+    mppt_index_dec,
+    validar,
+    vv,
+)
 
-# Cor padrão
-bg_c = "#e6f2ff"
+# Identidade visual centralizada
+COLORS = {
+    "background": "#F4F7FA",
+    "surface": "#FFFFFF",
+    "surface_alt": "#E8EEF5",
+    "primary": "#1F4E78",
+    "primary_soft": "#DCEAF7",
+    "text": "#17212B",
+    "muted": "#5D6B78",
+    "border": "#CBD5E1",
+    "success": "#2E7D32",
+    "warning": "#D97706",
+    "error": "#C62828",
+    "ignored": "#8A94A3",
+}
+FONT_FAMILY = "Segoe UI"
+bg_c = COLORS["background"]
 
 # Armazena todas as Toplevels abertas para finalizar elas depois
 toplevels = []
@@ -258,8 +285,8 @@ calculos_cc = {
     # Parâmetros de temperatura da celula
     "amb": 
         {
-        "t_cell_max": 50,                                       # Temperatura mínima
-        "t_cell_min": 10                                        # Temperatura máxima
+        "t_cell_max": 50,                                       # Temperatura máxima
+        "t_cell_min": 10                                        # Temperatura mínima
         },
     # Dados de tolerância
     "tol": 
@@ -282,9 +309,9 @@ def criar_label(container, texto, linha, coluna, style=0, colspan=1):
 
     if style == 'table':
 
-        cell_frame = tk.Frame(container, borderwidth=1, relief="solid", padx=None, pady=None, background=bg_c)
-        cell_frame.grid(row=linha, column=coluna, columnspan=colspan, sticky="nsew")
-        label = ttk.Label(cell_frame, text=texto, justify='left', anchor='w', wraplength=200, style="table.TLabel").grid(row=0, column=0, sticky="w")
+        cell_frame = tk.Frame(container, borderwidth=0, background=COLORS["surface"])
+        cell_frame.grid(row=linha, column=coluna, columnspan=colspan, sticky="nsew", padx=1, pady=1)
+        label = ttk.Label(cell_frame, text=texto, justify='left', anchor='w', wraplength=260, style="table.TLabel").grid(row=0, column=0, sticky="ew")
 
         return  label
     
@@ -305,28 +332,25 @@ def carregar_fabricante():
     calculos_cc["inv"] = {}
 
     try:
-        conexao = sqlite3.connect(db_path)
-        cursor = conexao.cursor()
-        
-        # Carregar fabricantes dos inversores em ordem alfabética
-        cursor.execute("SELECT ID, NAME FROM manufacturer WHERE CATEGORY IN (0, 2)")
-        fab_inversor = dict(sorted(
-            {row[1]: row[0] for row in cursor.fetchall()}.items(),
-             key=lambda item: item[0].lower()
-         )) # {Nome : ID}
-        
-        # Carregar fabricantes dos módulos em ordem alfabetica
-        cursor.execute("SELECT ID, NAME FROM manufacturer WHERE CATEGORY IN (1, 2)")
-        fab_modulo = dict(sorted(
-            {row[1]: row[0] for row in cursor.fetchall()}.items(),
-            key=lambda item: item[0].lower()
-         )) # {Nome : ID}
+        with closing(sqlite3.connect(db_path)) as conexao:
+            cursor = conexao.cursor()
+            # Carregar fabricantes dos inversores em ordem alfabética
+            cursor.execute("SELECT ID, NAME FROM manufacturer WHERE CATEGORY IN (0, 2)")
+            fab_inversor = dict(sorted(
+                {row[1]: row[0] for row in cursor.fetchall()}.items(),
+                key=lambda item: item[0].lower()
+            )) # {Nome : ID}
+
+            # Carregar fabricantes dos módulos em ordem alfabetica
+            cursor.execute("SELECT ID, NAME FROM manufacturer WHERE CATEGORY IN (1, 2)")
+            fab_modulo = dict(sorted(
+                {row[1]: row[0] for row in cursor.fetchall()}.items(),
+                key=lambda item: item[0].lower()
+            )) # {Nome : ID}
         
     except sqlite3.Error as e:
         messagebox.showerror("Erro no Banco de Dados", f"Erro ao carregar fabricantes: \n{e}")
 
-    finally:
-        conexao.close()
 ##################################################################################################################################
 
 # Busca modelos com base no fabricante selecionado
@@ -339,49 +363,46 @@ def carregar_modelo(fab_nome, equipamento):
     close_topLevels()
 
     try:
-        conexao = sqlite3.connect(db_path)
-        cursor = conexao.cursor()
-        
-        limpar_saidas()
-        frame_img.pack(fill='x', padx=30, pady=5)
+        with closing(sqlite3.connect(db_path)) as conexao:
+            cursor = conexao.cursor()
+            limpar_saidas()
+            frame_img.pack(fill='x', padx=30, pady=5)
 
-        if equipamento == "inversor":
-            # Limpa a variável inv_selec
-            inv_selec = {}
+            if equipamento == "inversor":
+                # Limpa a variável inv_selec
+                inv_selec = {}
 
-            # Reseta as opções de ignorar as faixas de operação e carga máxima
-            flag_no_iop.set(False)
-            chk_iop.config(state="disabled")
-            flag_no_fl.set(False)
-            chk_fl.config(state="disabled")
+                # Reseta as opções de ignorar as faixas de operação e carga máxima
+                flag_no_iop.set(False)
+                chk_iop.config(state="disabled")
+                flag_no_fl.set(False)
+                chk_fl.config(state="disabled")
 
-            # Adiciona os modelos de inversores do fabricante selecionado
-            fab_id = fab_inversor.get(fab_nome)
-            cursor.execute("SELECT ID, MODEL FROM inverter WHERE MANUFACTURER_ID = ?",(fab_id, ))
-            inversores = dict(sorted(
-                {row[1]: row[0] for row in cursor.fetchall()}.items(),
-                key=lambda item: item[0].lower()
+                # Adiciona os modelos de inversores do fabricante selecionado
+                fab_id = fab_inversor.get(fab_nome)
+                cursor.execute("SELECT ID, MODEL FROM inverter WHERE MANUFACTURER_ID = ?",(fab_id, ))
+                inversores = dict(sorted(
+                    {row[1]: row[0] for row in cursor.fetchall()}.items(),
+                    key=lambda item: item[0].lower()
+                    ))
+                inversor_cb["values"] = list(inversores.keys())
+                inversor_cb.set("")
+
+            elif equipamento == "modulo":
+                # Limpa a varíavel mod_selec
+                mod_selec = {}
+
+                # Adiciona os modelos de módulos do fabricante selecionado
+                fab_id = fab_modulo.get(fab_nome)
+                cursor.execute("SELECT ID, MODEL FROM module WHERE MANUFACTURER_ID = ?", (fab_id, ))
+                modulos = dict(sorted(
+                    {row[1]: row[0] for row in cursor.fetchall()}.items(),
+                    key=lambda item: item[0].lower()
                 ))
-            inversor_cb["values"] = list(inversores.keys())
-            inversor_cb.set("")
-
-        elif equipamento == "modulo": 
-            # Limpa a varíavel mod_selec
-            mod_selec = {}
-
-            # Adiciona os modelos de módulos do fabricante selecionado
-            fab_id = fab_modulo.get(fab_nome)
-            cursor.execute("SELECT ID, MODEL FROM module WHERE MANUFACTURER_ID = ?", (fab_id, ))
-            modulos = dict(sorted(
-                {row[1]: row[0] for row in cursor.fetchall()}.items(),
-                key=lambda item: item[0].lower()
-            ))
-            modulo_cb["values"] = list(modulos.keys())
-            modulo_cb.set("")
+                modulo_cb["values"] = list(modulos.keys())
+                modulo_cb.set("")
     except sqlite3.Error as e:
         messagebox.showerror("Erro no Banco de Dados", f"Erro ao carregar modelos: \n{e}")
-    finally:        
-        conexao.close()
 ##################################################################################################################################
 
 # Ao selecionar o inversor ou módulo, este código solicita os dados ao database
@@ -394,6 +415,7 @@ def carregar_dados(modelo, equipamento):
     close_topLevels()
 
     # Conecta ao banco de dados para solicitar os dados do inversor e MPPT
+    conexao = None
     try:
         conexao = sqlite3.connect(db_path)
         cursor = conexao.cursor()
@@ -464,7 +486,8 @@ def carregar_dados(modelo, equipamento):
     except sqlite3.Error as e:
         messagebox.showerror("Erro no Banco de Dados", f"Erro ao carregar dados do {equipamento}:\n{e}")
     finally:
-        conexao.close()
+        if conexao is not None:
+            conexao.close()
     ##########
     
     # Verifica se as variáveis de inversor e módulos estão preenchidas para fazer os calculos
@@ -488,6 +511,8 @@ def carregar_dados(modelo, equipamento):
                                                                     calculos_cc["amb"]["t_cell_min"], 
                                                                     calculos_cc["amb"]["t_cell_max"], 
                                                                     mod_selec["WP"])
+        # Premissa: como o banco não possui coeficientes específicos de Vmpp e Impp,
+        # Vmpp usa COEF_VOC e Impp usa COEF_ISC como aproximações.
         calculos_cc["mod"]["vmpp_min"], calculos_cc["mod"]["vmpp_max"] = compensacao_termica(
                                                                     calculos_cc["mod"]["coef_voc"], 
                                                                     calculos_cc["amb"]["t_cell_min"], 
@@ -574,15 +599,14 @@ def carregar_dados(modelo, equipamento):
                 """)
 
             # Calcular quantidades máximas de módulos e entradas do MPPT para compatibilidade entre equipamentos 
-            if vv(calculos_cc["mppt"][i]["max_sc_i"], calculos_cc["mod"]["impp_max"]):
-                calculos_cc["mppt"][i]["n_max_sc_mppt"] = math.trunc(calculos_cc["mppt"][i]["max_sc_i"]/calculos_cc["mod"]["isc_max"])
-            else:
-                calculos_cc["mppt"][i]["n_max_sc_mppt"] = -1
-
-            if vv(calculos_cc["mppt"][i]["max_o_i"], calculos_cc["mod"]["impp_max"]):
-                calculos_cc["mppt"][i]["n_max_o_mppt"] = math.trunc(calculos_cc["mppt"][i]["max_o_i"] * (1 + calculos_cc["tol"]["op_i"]) / calculos_cc["mod"]["impp_max"])
-            else:
-                calculos_cc["mppt"][i]["n_max_o_mppt"] = -1
+            calculos_cc["mppt"][i]["n_max_sc_mppt"] = limite_strings_curto_circuito(
+                calculos_cc["mppt"][i]["max_sc_i"], calculos_cc["mod"]["isc_max"]
+            )
+            calculos_cc["mppt"][i]["n_max_o_mppt"] = limite_strings_operacao(
+                calculos_cc["mppt"][i]["max_o_i"],
+                calculos_cc["mod"]["impp_max"],
+                calculos_cc["tol"]["op_i"],
+            )
             
             # Variável temporária para calcular q_s_mppt, considerando ou não a corrente de operação
             if flag_no_iop.get():
@@ -597,34 +621,22 @@ def carregar_dados(modelo, equipamento):
                     calculos_cc["mppt"][i]["n_max_o_mppt"]
                 ]
 
-            # Filtra apenas os valores válidos (≠ -1 e ≠ None)
-            if [v for v in q_s_mppt if v != -1 and v is not None]:
-                calculos_cc["mppt"][i]["q_s_mppt"] = min(q_s_mppt)
-            else:
-                calculos_cc["mppt"][i]["q_s_mppt"] = -1
+            calculos_cc["mppt"][i]["q_s_mppt"] = minimo_valido(q_s_mppt)
 
             # Se o valor for 0, o programa nem perde tempo calculando as quantidades de módulos compatíveis
             if (calculos_cc["mppt"][i]["q_s_mppt"] > 0 and vv(calculos_cc["mppt"][i]["q_s_mppt"])):
-                if vv(calculos_cc["mppt"][i]["min_i_v"], calculos_cc["mod"]["voc_min"], calculos_cc["mppt"][i]["max_i_v"], calculos_cc["mod"]["voc_max"]):
-                    calculos_cc["mppt"][i]["n_min_in"] = math.ceil(calculos_cc["mppt"][i]["min_i_v"]/calculos_cc["mod"]["voc_min"])
-                    calculos_cc["mppt"][i]["n_max_in"] = math.trunc(calculos_cc["mppt"][i]["max_i_v"]/calculos_cc["mod"]["voc_max"])
-                else:
-                    calculos_cc["mppt"][i]["n_min_in"] = -1
-                    calculos_cc["mppt"][i]["n_max_in"] = -1
-                    
-                if vv(calculos_cc["mppt"][i]["min_o_v"], calculos_cc["mod"]["vmpp_min"], calculos_cc["mppt"][i]["max_o_v"], calculos_cc["mod"]["vmpp_max"]):
-                    calculos_cc["mppt"][i]["n_min_o"] = math.ceil(calculos_cc["mppt"][i]["min_o_v"]/calculos_cc["mod"]["vmpp_min"])
-                    calculos_cc["mppt"][i]["n_max_o"] = math.trunc(calculos_cc["mppt"][i]["max_o_v"]/calculos_cc["mod"]["vmpp_max"])
-                else:
-                    calculos_cc["mppt"][i]["n_min_o"] = -1
-                    calculos_cc["mppt"][i]["n_max_o"] = -1
-
-                if vv(calculos_cc["mppt"][i]["min_fl_v"], calculos_cc["mod"]["vmpp_min"], calculos_cc["mppt"][i]["max_fl_v"], calculos_cc["mod"]["vmpp_max"]):
-                    calculos_cc["mppt"][i]["n_min_fl"] = math.ceil(calculos_cc["mppt"][i]["min_fl_v"]/calculos_cc["mod"]["vmpp_min"])
-                    calculos_cc["mppt"][i]["n_max_fl"] = math.trunc(calculos_cc["mppt"][i]["max_fl_v"]/calculos_cc["mod"]["vmpp_max"])
-                else:
-                    calculos_cc["mppt"][i]["n_min_fl"] = -1
-                    calculos_cc["mppt"][i]["n_max_fl"] = -1
+                calculos_cc["mppt"][i]["n_min_in"], calculos_cc["mppt"][i]["n_max_in"] = limites_modulos_serie(
+                    calculos_cc["mppt"][i]["min_i_v"], calculos_cc["mppt"][i]["max_i_v"],
+                    calculos_cc["mod"]["voc_min"], calculos_cc["mod"]["voc_max"],
+                )
+                calculos_cc["mppt"][i]["n_min_o"], calculos_cc["mppt"][i]["n_max_o"] = limites_modulos_serie(
+                    calculos_cc["mppt"][i]["min_o_v"], calculos_cc["mppt"][i]["max_o_v"],
+                    calculos_cc["mod"]["vmpp_min"], calculos_cc["mod"]["vmpp_max"],
+                )
+                calculos_cc["mppt"][i]["n_min_fl"], calculos_cc["mppt"][i]["n_max_fl"] = limites_modulos_serie(
+                    calculos_cc["mppt"][i]["min_fl_v"], calculos_cc["mppt"][i]["max_fl_v"],
+                    calculos_cc["mod"]["vmpp_min"], calculos_cc["mod"]["vmpp_max"],
+                )
 
             else:
                 calculos_cc["mppt"][i]["n_min_in"] = 0
@@ -720,10 +732,12 @@ def carregar_dados(modelo, equipamento):
                 else:
                     calculos_cc["inv"]["n_max_fl"] = -1
 
-        try:
-            calculos_cc["inv"]["n_max_sb"] = math.trunc(calculos_cc["inv"]["pn"] * (1 + calculos_cc["inv"]["sb"]) * (1 + calculos_cc["tol"]["pot"]) / calculos_cc["mod"]["p_nom"])
-        except (ZeroDivisionError, TypeError, KeyError):
-            calculos_cc["inv"]["n_max_sb"] = 0
+        calculos_cc["inv"]["n_max_sb"] = limite_modulos_sobrecarga(
+            calculos_cc["inv"].get("pn"),
+            calculos_cc["inv"].get("sb"),
+            calculos_cc["tol"].get("pot"),
+            calculos_cc["mod"].get("p_nom"),
+        )
 
         if flag_no_fl.get():
             q_max_o = [
@@ -809,7 +823,7 @@ def atualizar_saida():
     for i, mppt in enumerate(calculos_cc["mppt"]):
         
         aba.append(tk.Frame(notebook, bg=bg_c))
-        notebook.add(aba[-1], text=f"MPPT {formatar_tupla(mppt_index_dec(mppt.get("mppt_index")))}")
+        notebook.add(aba[-1], text=f"MPPT {format_mppt_display(mppt.get('mppt_index'))}")
 
         min_operacao.append(mppt.get("q_min_o") if vv(mppt.get("q_min_o")) else None)
         max_operacao.append(mppt.get("q_max_o") if vv(mppt.get("q_max_o")) else None)
@@ -825,8 +839,18 @@ def atualizar_saida():
         espaco_topo = 20
         ttk.Label(aba[i], text="Quantidade de módulos por String", style="h1.TLabel").pack(fill="x", side="top")
 
-        canvas = tk.Canvas(aba[i], width=largura + 50, height=altura + 50, bg=bg_c, bd=0, highlightthickness=0)
-        canvas.pack() 
+        canvas = tk.Canvas(aba[i], width=largura + 50, height=altura + 30, bg=bg_c, bd=0, highlightthickness=0)
+        canvas._last_width = largura + 50
+
+        def redimensionar_canvas(event, target=canvas):
+            if event.width <= 1 or target._last_width <= 1:
+                return
+            escala_x = event.width / target._last_width
+            target.scale("all", 0, 0, escala_x, 1)
+            target._last_width = event.width
+
+        canvas.bind("<Configure>", redimensionar_canvas)
+        canvas.pack(fill="x", expand=True, padx=20, pady=(10, 5))
 
         # Centralizar: definir ponto inicial
         x_offset = 25
@@ -896,7 +920,7 @@ def atualizar_saida():
         canvas.create_text(430, legenda_y + 7, text="Carga máxima", anchor='w', font=('Arial', 9))
 
         linha_final = tk.Frame(aba[i], bg=bg_c)
-        linha_final.pack(fill='x', pady=(5, 10))
+        linha_final.pack(side="bottom", fill='x', padx=10, pady=(5, 10))
 
         # Texto informativo sobre strings
         qtd_strings = f"Quantidade máxima de Strings por MPPT: {mppt.get('q_s_mppt', 'N/A')}/{mppt.get('n_in_mppt', 'N/A')}"
@@ -932,6 +956,10 @@ def atualizar_saida():
 
 # Janela auxiliar de detalhes dos inversores e módulos
 def open_detalhes(me):
+    eq = getattr(me, "eq", None)
+    if eq not in ("inversor", "modulo"):
+        messagebox.showerror("Erro", "Tipo de equipamento desconhecido.")
+        return
     
     def _on_mousewheel(event):
         canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
@@ -943,6 +971,7 @@ def open_detalhes(me):
         if detalhes.winfo_exists():
             detalhes.unbind("<MouseWheel>")
 
+        unregister_toplevel(detalhes)
         detalhes.destroy()
 
     # Desabilita o botão de chamada
@@ -951,7 +980,7 @@ def open_detalhes(me):
     detalhes = tk.Toplevel(root)
     detalhes.protocol("WM_DELETE_WINDOW", on_close)
     detalhes.iconphoto(False, icone)
-    toplevels.append((detalhes, on_close))
+    register_toplevel(detalhes, on_close)
 
     detalhes.configure(background=bg_c) 
 
@@ -968,22 +997,16 @@ def open_detalhes(me):
             scrollregion=canvas.bbox("all")
         )
     )        
-    canvas.create_window((0,0), window=scrollable_frame, anchor='nw')
+    canvas_window = canvas.create_window((0,0), window=scrollable_frame, anchor='nw')
+    canvas.bind("<Configure>", lambda event: canvas.itemconfigure(canvas_window, width=event.width))
     canvas.configure(yscrollcommand=scrollbar.set, background=bg_c)
     canvas.pack(side='left', fill="both", expand=True)
     scrollbar.pack(side='right', fill='y')
     
-    # Coleta o atributo do botão, definido na declaração
-    eq = getattr(me, "eq", None)
-
-    if eq not in ['inversor', 'modulo']:
-        messagebox.showerror("Erro", "Tipo de equipamento desconhecido.")
-        return
-
     # caso o botão de chamada for identificado como o botão dos detalhes do inversor
     if  eq == "inversor":
         detalhes.title("Detalhes do Inversor")
-        detalhes.geometry("358x620+650+0")
+        center_window(detalhes, 560, 700, min_width=460, min_height=480)
 
         if not inv_selec:
             messagebox.showinfo("Aviso", "Selecione um inversor.")
@@ -1068,7 +1091,7 @@ def open_detalhes(me):
                     frame = tk.Frame(notebook_mppt, bg=bg_c, bd=0, highlightthickness=0)#, padx=0, pady=0)
                     frame.columnconfigure(0, weight=1)
                     frame.columnconfigure(1, weight=1)
-                    notebook_mppt.add(frame, text=f"MPPT {formatar_tupla(mppt_index_dec(mppt["MPPT_INDEX"]))}")
+                    notebook_mppt.add(frame, text=f"MPPT {format_mppt_display(mppt['MPPT_INDEX'])}")
 
                     for i, (label_txt, chave) in enumerate(secao["dados"]):
                         criar_label(frame, label_txt, i, 0, style="table")
@@ -1094,7 +1117,7 @@ def open_detalhes(me):
 
     elif eq == "modulo":
         detalhes.title("Detalhes do Módulo")
-        detalhes.geometry("358x620+1008+0")
+        center_window(detalhes, 560, 700, min_width=460, min_height=480)
         # Desabilita o botão de chamada
         me.config(state='disabled') 
 
@@ -1169,14 +1192,14 @@ def open_detalhes(me):
         
 # Abre janela com os gráficos da quantidades de strings a serem ligadas por MPPT e Quantidade máxima de módulos
 def open_detalhes_graficos(me, indice_mppt):
+    figuras = []
 
     # Ao fechar, destrói os gráficos
     def on_close():
         me.config(state="normal")
-        plt.close('all')
-        if detalhes_graficos in toplevels:
-            toplevels.remove(detalhes_graficos)
-
+        for figura in figuras:
+            plt.close(figura)
+        unregister_toplevel(detalhes_graficos)
         detalhes_graficos.destroy()
 
     # Desabilita o botão de chamada
@@ -1186,21 +1209,29 @@ def open_detalhes_graficos(me, indice_mppt):
 
     detalhes_graficos = tk.Toplevel(root)
     detalhes_graficos.iconphoto(False, icone)
-    detalhes_graficos.state("zoomed")
+    center_window(detalhes_graficos, 1100, 700, min_width=760, min_height=520)
     detalhes_graficos.protocol("WM_DELETE_WINDOW", on_close)
     detalhes_graficos.configure(background=bg_c)
 
-    toplevels.append((detalhes_graficos, on_close))
+    register_toplevel(detalhes_graficos, on_close)
 
     detalhes_graficos.title("Detalhes dos Limites")
 
-    frame_titulo = tk.Frame(detalhes_graficos, bg=bg_c)
-    frame_titulo.pack(side="top", fill="x", padx=20, pady=10, expand=True)
-    ttk.Label(frame_titulo, text=f"{inv_selec["MODEL"]} | {mod_selec["MODEL"]}", font=('Arial', 12, 'bold')).pack()
-    ttk.Label(frame_titulo, text=f"MPPT: {formatar_tupla(mppt_index_dec(calculos_cc['mppt'][indice_mppt]["mppt_index"]))}", font=('Arial', 12, 'bold')).pack()
+    frame_titulo = tk.Frame(detalhes_graficos, bg=COLORS["surface"])
+    frame_titulo.pack(side="top", fill="x", padx=12, pady=(10, 4))
+    ttk.Label(
+        frame_titulo,
+        text=f"{inv_selec['MODEL']} | {mod_selec['MODEL']}",
+        style="WindowTitle.TLabel",
+    ).pack(pady=(6, 1))
+    mppt_texto = format_mppt_display(calculos_cc["mppt"][indice_mppt]["mppt_index"])
+    ttk.Label(frame_titulo, text=f"MPPT: {mppt_texto}", style="WindowSubtitle.TLabel").pack(pady=(1, 6))
 
     frame_conteudo = tk.Frame(detalhes_graficos, bg=bg_c)
-    frame_conteudo.pack(side='top', fill='both', expand=True)
+    frame_conteudo.pack(side='top', fill='both', expand=True, padx=8, pady=(0, 8))
+    frame_conteudo.grid_rowconfigure(0, weight=1)
+    frame_conteudo.grid_columnconfigure(0, weight=1, uniform="graficos")
+    frame_conteudo.grid_columnconfigure(1, weight=1, uniform="graficos")
 
     # Gráfico #1: Séries por MPPT
     entradas_por_mppt = {
@@ -1210,26 +1241,30 @@ def open_detalhes_graficos(me, indice_mppt):
     }
 
     ignorar_chave_iop = "Operação" if flag_no_iop.get() else None
-    val_validos1 = [v for k, v in entradas_por_mppt.items() if k != ignorar_chave_iop]
+    val_validos1 = [v for k, v in entradas_por_mppt.items() if k != ignorar_chave_iop and vv(v)]
 
-    menor1 = min(val_validos1)
+    menor1 = min(val_validos1) if val_validos1 else None
     cores1 = []
 
     for k, v in entradas_por_mppt.items():
-        if k == ignorar_chave_iop:
-            cores1.append("gray")
-        elif v == menor1:
-            cores1.append("red")
+        if k == ignorar_chave_iop or not vv(v):
+            cores1.append(COLORS["ignored"])
+        elif menor1 is not None and v == menor1:
+            cores1.append(COLORS["error"])
         else:
-            cores1.append("blue")        
+            cores1.append(COLORS["success"])
 
     fig1, ax1 = plt.subplots(figsize=(4, 3))
-    ax1.bar(entradas_por_mppt.keys(), entradas_por_mppt.values(), color=cores1, edgecolor="black", linewidth=1.5)
+    figuras.append(fig1)
+    valores_plot1 = [v if vv(v) and v >= 0 else 0 for v in entradas_por_mppt.values()]
+    ax1.bar(entradas_por_mppt.keys(), valores_plot1, color=cores1, edgecolor=COLORS["border"], linewidth=1)
 
-    for i, (label, valor) in enumerate(zip(entradas_por_mppt.keys(), entradas_por_mppt.values())):
-        ax1.text(i, valor * 0.5, str(valor), ha='center', va='center', color='white', fontsize=10, weight='bold')
+    for i, valor in enumerate(entradas_por_mppt.values()):
+        texto = str(valor) if vv(valor) else "N/D"
+        ax1.text(i, max(valores_plot1[i] * 0.5, 0.08), texto, ha='center', va='center', color='white', fontsize=10, weight='bold')
     
-    ax1.set_title("Máximo de strings por MPPT", pad=15)
+    style_chart(ax1, "Máximo de strings por MPPT", "Strings")
+    add_chart_legend(ax1, cores1)
     ax1.yaxis.set_major_locator(MaxNLocator(integer=True))
     ax1.set_xticks(range(len(entradas_por_mppt)))
     ax1.set_xticklabels(entradas_por_mppt.keys(), rotation=15, ha="right")
@@ -1237,7 +1272,7 @@ def open_detalhes_graficos(me, indice_mppt):
         fig1.tight_layout()
         canvas1 = FigureCanvasTkAgg(fig1, master=frame_conteudo)
         canvas1.draw()
-        canvas1.get_tk_widget().pack(side='left', fill='both', padx=10, pady=10, expand=True)
+        canvas1.get_tk_widget().grid(row=0, column=0, sticky="nsew", padx=(4, 6), pady=4)
     except Exception as e:
         messagebox.showerror("Erro ao gerar gráfico", f"Detalhes: {e}")
 
@@ -1253,24 +1288,26 @@ def open_detalhes_graficos(me, indice_mppt):
     ignorar_chave_fl = "Carga máx" if flag_no_fl.get() else None
     val_validos2 = [v for k, v in q_max_modulos_str.items() if k != ignorar_chave_fl]
 
-    menor2 = min(val_validos2)
+    menor2 = min(val_validos2) if val_validos2 else None
     cores2 = []
 
     for k, v in q_max_modulos_str.items():
         if k == ignorar_chave_fl:
-            cores2.append("gray")
-        elif v == menor2:
-            cores2.append("red")
+            cores2.append(COLORS["ignored"])
+        elif menor2 is not None and v == menor2:
+            cores2.append(COLORS["error"])
         else:
-            cores2.append("blue")   
+            cores2.append(COLORS["success"])
 
     fig2, ax2 = plt.subplots(figsize=(4, 3))
-    ax2.bar(q_max_modulos_str.keys(), q_max_modulos_str.values(), color=cores2, edgecolor="black", linewidth=1.5)
+    figuras.append(fig2)
+    ax2.bar(q_max_modulos_str.keys(), q_max_modulos_str.values(), color=cores2, edgecolor=COLORS["border"], linewidth=1)
 
     for i, (label, valor) in enumerate(zip(q_max_modulos_str.keys(), q_max_modulos_str.values())):
         ax2.text(i, valor * 0.5, str(valor), ha='center', va='center', color='white', fontsize=10, weight='bold')
     
-    ax2.set_title("Quantidade máxima de módulos por string", pad=15)
+    style_chart(ax2, "Quantidade máxima de módulos por string", "Módulos")
+    add_chart_legend(ax2, cores2)
     ax2.yaxis.set_major_locator(MaxNLocator(integer=True))
     ax2.set_xticks(range(len(q_max_modulos_str)))
     ax2.set_xticklabels(q_max_modulos_str.keys(), rotation=15, ha="right")
@@ -1278,21 +1315,21 @@ def open_detalhes_graficos(me, indice_mppt):
         fig2.tight_layout()
         canvas2 = FigureCanvasTkAgg(fig2, master=frame_conteudo)
         canvas2.draw()
-        canvas2.get_tk_widget().pack(side='left', fill='both', padx=10, pady=10, expand=True)
+        canvas2.get_tk_widget().grid(row=0, column=1, sticky="nsew", padx=(6, 4), pady=4)
     except Exception as e:
         messagebox.showerror("Erro ao gerar gráfico", f"Detalhes: {e}")
 ##################################################################################################################################
 
 # Abre uma janela com os gráficos da quantidade de placas suportadas pelo inversor
 def open_resumo_geral(me):
+    figuras = []
 
     # Ao fechar, destrói os gráficos
     def on_close():
         me.config(state="normal")
-        plt.close('all')
-        if resumo_geral in toplevels:
-            toplevels.remove(resumo_geral)
-
+        for figura in figuras:
+            plt.close(figura)
+        unregister_toplevel(resumo_geral)
         resumo_geral.destroy()
 
     # Desabilita o botão de chamada
@@ -1301,13 +1338,7 @@ def open_resumo_geral(me):
     resumo_geral = tk.Toplevel(root)
     resumo_geral.iconphoto(False, icone)
 
-    # Memoriza o tamanho da janela e impede que o usuário diminua o tamanho para além do especificado
-    resumo_geral.update_idletasks()
-    largura = resumo_geral.winfo_width()
-    altura = resumo_geral.winfo_height()
-    resumo_geral.minsize(largura, altura)
-
-    resumo_geral.state("zoomed")
+    center_window(resumo_geral, 1180, 760, min_width=900, min_height=600)
 
     resumo_geral.protocol("WM_DELETE_WINDOW", on_close)
     resumo_geral.configure(background=bg_c)
@@ -1316,23 +1347,23 @@ def open_resumo_geral(me):
     resumo_geral.grid_rowconfigure(1, weight=1)
     resumo_geral.grid_columnconfigure(0, weight=1)
 
-    toplevels.append((resumo_geral, on_close))
+    register_toplevel(resumo_geral, on_close)
 
     resumo_geral.title("Resumo Geral do Inversor")
 
     # Frame do título
     frame_titulo = tk.Frame(resumo_geral, bg=bg_c)
-    frame_titulo.grid(row=0, column=0, sticky="nsew", padx=20, pady=10)
-    ttk.Label(frame_titulo, text=f"{inv_selec['MODEL']} | {mod_selec["MODEL"]}", font=("Arial", 12, "bold"), anchor="center", justify="center").grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+    frame_titulo.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
+    ttk.Label(frame_titulo, text=f"{inv_selec['MODEL']} | {mod_selec['MODEL']}", style="WindowTitle.TLabel", anchor="center", justify="center").grid(row=0, column=0, sticky="ew", padx=10, pady=6)
 
     frame_titulo.grid_columnconfigure(0, weight=1)
 
     # Frame horizontal contendo gráfico e MPPTs
     frame_conteudo = tk.Frame(resumo_geral, bg=bg_c)
-    frame_conteudo.grid(row=1, column=0, sticky="nsew", padx=20, pady=10)
+    frame_conteudo.grid(row=1, column=0, sticky="nsew", padx=12, pady=(4, 12))
 
-    frame_conteudo.grid_columnconfigure(0, weight=3)
-    frame_conteudo.grid_columnconfigure(1, weight=1)
+    frame_conteudo.grid_columnconfigure(0, weight=1)
+    frame_conteudo.grid_columnconfigure(1, weight=0, minsize=340)
     frame_conteudo.grid_rowconfigure(0, weight=1)
 
     # Frame do gráfico principal
@@ -1351,35 +1382,37 @@ def open_resumo_geral(me):
     ignorar_chave_fl = "Carga máx" if flag_no_fl.get() else None
     val_validos = [v for k, v in q_max_modulos_inv.items() if k != ignorar_chave_fl]
 
-    menor = min(val_validos)
+    menor = min(val_validos) if val_validos else None
     cores = []
 
     for k, v in q_max_modulos_inv.items():
         if k == ignorar_chave_fl:
-            cores.append("gray")
-        elif v == menor:
-            cores.append("red")
+            cores.append(COLORS["ignored"])
+        elif menor is not None and v == menor:
+            cores.append(COLORS["error"])
         else:
-            cores.append("blue")        
+            cores.append(COLORS["success"])
 
     legenda = []
 
-    if "gray" in cores:
-        legenda.append(Patch(facecolor="gray", edgecolor="black", label="Faixa ignorada (Carga máx)"))
-    if "red" in cores:
-        legenda.append(Patch(facecolor="red", edgecolor="black", label="Valor limitante"))
-    if "blue" in cores:
-        legenda.append(Patch(facecolor="blue", edgecolor="black", label="Faixa válida"))
+    if COLORS["ignored"] in cores:
+        legenda.append(Patch(facecolor=COLORS["ignored"], edgecolor=COLORS["border"], label="Faixa ignorada (Carga máx)"))
+    if COLORS["error"] in cores:
+        legenda.append(Patch(facecolor=COLORS["error"], edgecolor=COLORS["border"], label="Valor limitante"))
+    if COLORS["success"] in cores:
+        legenda.append(Patch(facecolor=COLORS["success"], edgecolor=COLORS["border"], label="Faixa válida"))
 
     fig, ax = plt.subplots(figsize=(5, 4))
-    ax.bar(q_max_modulos_inv.keys(), q_max_modulos_inv.values(), color=cores, edgecolor="black", linewidth=1.5)
-    ax.legend(handles=legenda, loc="upper center", bbox_to_anchor=(0.5, 1.25), bbox_transform=fig.transFigure, fancybox=True, shadow=False, ncol=len(legenda), fontsize=8)
+    figuras.append(fig)
+    ax.bar(q_max_modulos_inv.keys(), q_max_modulos_inv.values(), color=cores, edgecolor=COLORS["border"], linewidth=1)
+    if legenda:
+        ax.legend(handles=legenda, loc="upper center", bbox_to_anchor=(0.5, 1.0), frameon=False, ncol=len(legenda), fontsize=8)
     
     for i, (label, val) in enumerate(q_max_modulos_inv.items()):
-        cor_texto = "black" if cores[i] == "gray" else "white"
+        cor_texto = COLORS["text"] if cores[i] == COLORS["ignored"] else "white"
         ax.text(i, val*0.5, str(val), ha="center", va="center", color=cor_texto, fontsize=10, weight="bold")
 
-    ax.set_title("Quantidade máxima de módulos por inversor", fontsize=12, fontweight="bold", pad=20, wrap=True)
+    style_chart(ax, "Quantidade máxima de módulos por inversor", "Módulos")
     ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     ax.set_xticks(range(len(q_max_modulos_inv)))
     ax.set_xticklabels(q_max_modulos_inv.keys(), rotation=15, ha="center")
@@ -1390,7 +1423,7 @@ def open_resumo_geral(me):
 
     # Frame com informações por MPPT
     frame_mppt = tk.Frame(frame_conteudo, bg=bg_c, bd=2, relief="groove")
-    frame_mppt.grid(row=0, column=1, sticky="nsew", padx=20, pady=10)
+    frame_mppt.grid(row=0, column=1, sticky="ns", padx=(12, 0), pady=4)
 
     # Informações Gerais
     # Título
@@ -1424,7 +1457,7 @@ def open_resumo_geral(me):
 
     for i, mppt in enumerate(calculos_cc["mppt"]):
         bg = "#f0f8ff" if i % 2 == 0 else bg_c
-        tk.Label(frame_op, text=formatar_tupla(mppt_index_dec(mppt["mppt_index"])), bg=bg, anchor="center").grid(row=i+2, column=0, sticky="nsew", padx=1)
+        tk.Label(frame_op, text=format_mppt_display(mppt["mppt_index"]), bg=bg, anchor="center").grid(row=i+2, column=0, sticky="nsew", padx=1)
         tk.Label(frame_op, text=mppt["n_mod_o_mppt"], bg=bg, anchor="center").grid(row=i+2, column=1, sticky="nsew", padx=1)
         tk.Label(frame_op, text=f"{mppt['p_mod_o_mppt']:.1f}", bg=bg, anchor="center").grid(row=i+2, column=2, sticky="nsew", padx=1)
 
@@ -1443,7 +1476,7 @@ def open_resumo_geral(me):
 
     for i, mppt in enumerate(calculos_cc["mppt"]):
         bg = "#f0f8ff" if i % 2 == 0 else bg_c
-        tk.Label(frame_max, text=formatar_tupla(mppt_index_dec(mppt["mppt_index"])), bg=bg, anchor="center").grid(row=i+2, column=0, sticky="nsew", padx=1)
+        tk.Label(frame_max, text=format_mppt_display(mppt["mppt_index"]), bg=bg, anchor="center").grid(row=i+2, column=0, sticky="nsew", padx=1)
         tk.Label(frame_max, text=mppt["n_mod_fl_mppt"] if vv(mppt["n_mod_fl_mppt"]) else "Não Informado", bg=bg, anchor="center").grid(row=i+2, column=1, sticky="nsew", padx=1)
         tk.Label(frame_max, text=f"{mppt["p_mod_fl_mppt"]:.1f}" if vv(mppt['p_mod_fl_mppt']) else "Não Informado", bg=bg, anchor="center").grid(row=i+2, column=2, sticky="nsew", padx=1)
 ##################################################################################################################################
@@ -1457,17 +1490,74 @@ def atualizar_aviso():
 ##################################################################################################################################
 
 ## Funções referentes ao funcionamento da janela ##
-# Define o caminho dos arquivos exernos
-def resource_path(relative_path: str) -> str:
-    try:
-        # Quando empacotado com PyInstaller
-        base_path = Path(sys._MEIPASS) # pasta temporária criada pelo PyInstaller
-    except Exception:
-        # Quando executado como script normal
-        base_path = Path(__file__).resolve().parent
-    return str((base_path / relative_path).resolve())
-##################################################################################################################################
-# pyinstaller --onefile --noconsole --icon=optimus_sun.ico --name "Optimus Sun 2.3.7" --add-data "optimus_sun.png;." --add-data "optimus_sun.ico;." inv_vs_mod_gui.py
+
+def center_window(window, width, height, min_width=None, min_height=None):
+    """Dimensiona e centraliza uma janela sem ultrapassar a área útil da tela."""
+    window.update_idletasks()
+    screen_width = window.winfo_screenwidth()
+    screen_height = window.winfo_screenheight()
+    width = min(width, max(320, screen_width - 80))
+    height = min(height, max(240, screen_height - 100))
+    x = max(0, (screen_width - width) // 2)
+    y = max(0, (screen_height - height) // 2)
+    window.geometry(f"{width}x{height}+{x}+{y}")
+    window.minsize(min_width or min(width, 420), min_height or min(height, 320))
+    window.resizable(True, True)
+
+
+def format_mppt_display(mppt_index):
+    """Formata a identificação visual sem alterar a codificação dos MPPTs."""
+    indices = mppt_index_dec(mppt_index)
+    if indices:
+        return formatar_tupla(indices)
+    if mppt_index == 0:
+        total = inv_selec.get("NUMBER_OF_TRACKERS")
+        if vv(total) and total > 0:
+            return "1" if total == 1 else f"1 a {total}"
+    return "Não informado"
+
+
+def register_toplevel(window, close_callback):
+    """Registra uma janela auxiliar para fechamento coordenado da aplicação."""
+    toplevels.append((window, close_callback))
+
+
+def unregister_toplevel(window):
+    """Remove referências a uma janela auxiliar já encerrada."""
+    toplevels[:] = [(item, callback) for item, callback in toplevels if item is not window]
+
+
+def style_chart(ax, title, ylabel="Quantidade"):
+    """Aplica identidade visual e legibilidade consistentes aos gráficos."""
+    ax.set_title(title, fontsize=12, fontweight="semibold", color=COLORS["text"], pad=16)
+    ax.set_ylabel(ylabel, color=COLORS["muted"])
+    ax.set_facecolor(COLORS["surface"])
+    ax.grid(axis="y", color=COLORS["border"], linewidth=0.8, alpha=0.65)
+    ax.set_axisbelow(True)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color(COLORS["border"])
+    ax.spines["bottom"].set_color(COLORS["border"])
+
+
+def add_chart_legend(ax, colors):
+    """Explica a semântica das cores para que elas não sejam o único indicador."""
+    labels = (
+        ("error", "Valor limitante"),
+        ("success", "Condição válida"),
+        ("ignored", "Ignorado ou não informado"),
+    )
+    handles = [
+        Patch(facecolor=COLORS[key], edgecolor=COLORS["border"], label=label)
+        for key, label in labels
+        if COLORS[key] in colors
+    ]
+    if handles:
+        ax.legend(handles=handles, loc="upper right", frameon=False, fontsize=8)
+
+
+# Exemplo de build a partir de src/; o banco permanece externo ao bundle.
+# pyinstaller --onedir --noconsole --icon=optimus_sun.ico --name "Optimus Sun 2.3.7" --add-data "optimus_sun.png;." --add-data "optimus_sun.ico;." optimus_sun.py
 
 # Evento de fechamento da janela
 def on_close_all():
@@ -1478,21 +1568,19 @@ def on_close_all():
 
 # Evento de fechamento das TopLevels
 def close_topLevels():
-    for janela, fechar in toplevels:
+    for janela, fechar in list(toplevels):
         try:
             if janela.winfo_exists():
                 fechar()
-        except:
-            pass   
+        except tk.TclError:
+            unregister_toplevel(janela)
 ################################################################################################################################## 
 
 # Endereço dos arquivos
 
 def resource_path(relative_path: str) -> str:
-    try:
-        base_path = Path(sys._MEIPASS)
-    except Exception:
-        base_path = Path(__file__).resolve().parent
+    """Resolve recursos internos tanto no código-fonte quanto no bundle PyInstaller."""
+    base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     return str((base_path / relative_path).resolve())
 
 def external_path(filename: str) -> str:
@@ -1512,30 +1600,33 @@ root = tk.Tk()
 root.iconbitmap(icon_path)
 root.title("Optimus Sun 2.3.7")
 root.configure(background=bg_c)
-root.geometry("650x620+0+0")
-root.resizable(False, False)
+center_window(root, 760, 680, min_width=680, min_height=600)
 
 icone = tk.PhotoImage(file=logo_path)
 
 # Estilos
 style = ttk.Style()
-style.theme_use("default")
+style.theme_use("clam")
 
-style.configure("TNotebook", background=bg_c, bordercolor="#000000")
-style.configure("TNotebook.Tab", background=bg_c, padding=6)
-style.map("TNotebook.Tab", background=[("selected", bg_c)])
+style.configure(".", font=(FONT_FAMILY, 10), background=bg_c, foreground=COLORS["text"])
+style.configure("TFrame", background=bg_c)
+style.configure("TNotebook", background=bg_c, bordercolor=COLORS["border"])
+style.configure("TNotebook.Tab", background=COLORS["surface_alt"], padding=(12, 7))
+style.map("TNotebook.Tab", background=[("selected", COLORS["surface"])], foreground=[("selected", COLORS["primary"])])
 style.configure("Detalhes.TNotebook", background=bg_c, borderwidth=0, padding=0)
 style.configure("Detalhes.TNotebook.Tab", padding=[5, 2], focuscolor=style.configure(".")["background"])
-style.map("Detalhes.TNotebook.Tab", background=[("selected", "#d1eaff")])
-style.configure("TLabel", padding=2, font=("Trebuchet MS", 10), background=bg_c)
-style.configure("h1.TLabel", padding=2, font=("Trebuchet MS", 12, "bold"))
-style.configure("table.TLabel", padding=2, font=("Trebuchet MS", 8))
-style.configure("TCombobox", padding=3, font=("Trebuchet MS", 10))
-style.configure("TEntry", padding=2, font=("Trebuchet MS", 10))
-style.configure("TButton", font=("Trebuchet MS", 10))
+style.map("Detalhes.TNotebook.Tab", background=[("selected", COLORS["primary_soft"])])
+style.configure("TLabel", padding=3, font=(FONT_FAMILY, 10), background=bg_c, foreground=COLORS["text"])
+style.configure("h1.TLabel", padding=(4, 8), font=(FONT_FAMILY, 13, "bold"), foreground=COLORS["primary"])
+style.configure("table.TLabel", padding=(8, 5), font=(FONT_FAMILY, 9), background=COLORS["surface"])
+style.configure("WindowTitle.TLabel", padding=2, font=(FONT_FAMILY, 13, "bold"), background=COLORS["surface"], foreground=COLORS["primary"])
+style.configure("WindowSubtitle.TLabel", padding=2, font=(FONT_FAMILY, 10), background=COLORS["surface"], foreground=COLORS["muted"])
+style.configure("TCombobox", padding=4, font=(FONT_FAMILY, 10))
+style.configure("TEntry", padding=4, font=(FONT_FAMILY, 10))
+style.configure("TButton", padding=(10, 5), font=(FONT_FAMILY, 10))
 style.configure("TCanvas", background=bg_c)
 style.configure("TScrollbar", background=bg_c)
-style.configure("TCheckbutton", font=("Trebuchet MS", 10))
+style.configure("TCheckbutton", font=(FONT_FAMILY, 10))
 
 # Carregar fabricantes antes de criar os widgets
 carregar_fabricante()
@@ -1547,37 +1638,42 @@ notebook = ttk.Notebook(root)                                 # Campos de Saída
 frame_img = tk.Frame(root, bg=bg_c)                    # Imagem do Optimus Sun
 rodape = ttk.Label(root, text="Optimus Sun 2.3.7 — Pedro Akio Sakuma © 2025–2026", anchor='e', font=("Arial", 8)) # Label fixo no rodapé
 
-frame_entrada.pack(fill="x", padx=10, pady=5)
+frame_entrada.pack(fill="x", padx=24, pady=(12, 6))
 separador1.pack(fill='x', padx=10, pady=5)
 frame_qtd_mod_inv.pack(fill='x', padx=30, pady=5)
 notebook.pack(expand=True, fill='both', padx=10, pady=10)
 frame_img.pack(fill='x', padx=30, pady=5)
 rodape.pack(side="bottom", fill='x', pady=(5,3))
 
+frame_entrada.grid_columnconfigure(0, weight=0)
+frame_entrada.grid_columnconfigure(1, weight=1, uniform="seletores")
+frame_entrada.grid_columnconfigure(2, weight=0)
+frame_entrada.grid_columnconfigure(3, weight=1, uniform="seletores")
+
 # ----------------------------------- #
 # ---------- frame_entrada ---------- #
 # Selecionar fabricante do Inversor
 criar_label(frame_entrada, "Fabricante do inversor:", 0, 0)   
 fab_inversor_cb = ttk.Combobox(frame_entrada, values = list(fab_inversor.keys()), state = "readonly")
-fab_inversor_cb.grid(row = 0, column = 1, padx = 5, pady = 5)
+fab_inversor_cb.grid(row = 0, column = 1, sticky="ew", padx = (5, 18), pady = 5)
 fab_inversor_cb.bind("<<ComboboxSelected>>", lambda e: carregar_modelo(fab_inversor_cb.get(), "inversor"))
 
 # Selecionar fabricante do Módulo
 criar_label(frame_entrada, "Fabricante do módulo:", 0, 2)
-fab_modulo_cb = ttk.Combobox(frame_entrada, values = list(fab_modulo.keys()), state = "readonly", width=23)
-fab_modulo_cb.grid(row=0, column=3, padx = 5, pady = 5)
+fab_modulo_cb = ttk.Combobox(frame_entrada, values = list(fab_modulo.keys()), state = "readonly")
+fab_modulo_cb.grid(row=0, column=3, sticky="ew", padx = (5, 0), pady = 5)
 fab_modulo_cb.bind("<<ComboboxSelected>>", lambda e: carregar_modelo(fab_modulo_cb.get(), "modulo"))
 
 # Seleção de inversor por modelo
 criar_label(frame_entrada, "Selecione o inversor:", 1, 0)
 inversor_cb = ttk.Combobox(frame_entrada, state = "readonly")
-inversor_cb.grid(row=1, column=1, padx=5, pady=5)
+inversor_cb.grid(row=1, column=1, sticky="ew", padx=(5, 18), pady=5)
 inversor_cb.bind("<<ComboboxSelected>>", lambda e: carregar_dados(inversor_cb.get(), "inversor"))
 
 # Seleção de módulo por modelo
 criar_label(frame_entrada, "Selecione o módulo:", 1, 2)
-modulo_cb = ttk.Combobox(frame_entrada, state = "readonly", width=23)
-modulo_cb.grid(row=1, column=3, padx=5, pady=5)
+modulo_cb = ttk.Combobox(frame_entrada, state = "readonly")
+modulo_cb.grid(row=1, column=3, sticky="ew", padx=(5, 0), pady=5)
 modulo_cb.bind("<<ComboboxSelected>>", lambda e: carregar_dados(modulo_cb.get(), "modulo"))
 
 # Condições de funcionamento do inversor
@@ -1595,12 +1691,12 @@ chk_fl.config(command=lambda: carregar_dados(inversor_cb.get(), ""))
 
 # Botão de detalhes do inversor
 detalhes_inv_btn = ttk.Button(frame_entrada, text="Detalhes", command=lambda: open_detalhes(detalhes_inv_btn))
-detalhes_inv_btn.grid(row=4, column=1, padx=5, pady=5)
+detalhes_inv_btn.grid(row=4, column=1, sticky="e", padx=(5, 18), pady=5)
 detalhes_inv_btn.eq = "inversor"
 
 # Botão de detalhes do modulo
 detalhes_mod_btn = ttk.Button(frame_entrada, text="Detalhes", command=lambda: open_detalhes(detalhes_mod_btn))
-detalhes_mod_btn.grid(row=4, column=3, padx=5, pady=5)
+detalhes_mod_btn.grid(row=4, column=3, sticky="e", padx=(5, 0), pady=5)
 detalhes_mod_btn.eq = "modulo"
 # ---------- frame_entrada ---------- #
 # ----------------------------------- #
@@ -1608,7 +1704,7 @@ detalhes_mod_btn.eq = "modulo"
 # -------- frame_qtd_mod_inv -------- #
 # ----------------------------------- #
 ttk.Label(frame_qtd_mod_inv, text="Potência máxima no inversor", style="h1.TLabel").grid(row=0, column=0, columnspan=2, padx=5, pady=5, sticky='w')
-btn_resumo_geral = ttk.Button(frame_qtd_mod_inv, text="Calculos", command= lambda: open_resumo_geral(btn_resumo_geral))
+btn_resumo_geral = ttk.Button(frame_qtd_mod_inv, text="Cálculos", command= lambda: open_resumo_geral(btn_resumo_geral))
 ttk.Label(frame_qtd_mod_inv, text="Qtd. máx. de módulos:").grid(row=1, column=0, padx=5, pady=5, sticky='w')
 entry_modulos = ttk.Entry(frame_qtd_mod_inv, width=10, state="readonly")
 ttk.Label(frame_qtd_mod_inv, text="Sobrecarga admitida:").grid(row=2, column=0, padx=5, pady=5, sticky='w')
@@ -1617,11 +1713,13 @@ entry_sobrecarga_percent = ttk.Entry(frame_qtd_mod_inv, width=10, state="readonl
 aviso = tk.Label(frame_qtd_mod_inv, text="ATENÇÃO:\nA geração do sistema\npode ser comprometida!",
                  fg="red", bg=bg_c, font=("Trebuchet MS", 12, "bold"), justify="center")
 
-btn_resumo_geral.grid(row=1, column=3, rowspan=2, padx=5, pady=5, sticky="nsew")
+frame_qtd_mod_inv.grid_columnconfigure(3, weight=1)
+
+btn_resumo_geral.grid(row=1, column=4, rowspan=2, padx=12, pady=5, sticky="ns")
 entry_modulos.grid(row=1, column=1, padx=5, pady=5)
 entry_sobrecarga.grid(row=2, column=1, padx=5, pady=5)
 entry_sobrecarga_percent.grid(row=2, column=2, padx=5, pady=5)
-aviso.grid(row=0, column=4, rowspan=3, padx=5, pady=5, sticky="nsew")
+aviso.grid(row=0, column=5, rowspan=3, padx=12, pady=5, sticky="e")
 aviso.grid_remove()
 
 # -------- frame_qtd_mod_inv -------- #

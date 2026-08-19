@@ -1,14 +1,16 @@
-#calculos.py
+"""Funções de cálculo e formatação independentes da interface gráfica."""
 
-def compensacao_termica (coef, t_min, t_max, gr):
-    # gr = grandeza
+import math
+
+def compensacao_termica(coef, t_min, t_max, grandeza):
+    """Retorna os extremos térmicos de uma grandeza em torno de 25 °C."""
     if coef < 0:
-        gr_min = gr * (1 + (t_max - 25) * coef)
-        gr_max = gr * (1 + (t_min - 25) * coef)
+        gr_min = grandeza * (1 + (t_max - 25) * coef)
+        gr_max = grandeza * (1 + (t_min - 25) * coef)
 
     else:
-        gr_min = gr * (1 + (t_min - 25) * coef)
-        gr_max = gr * (1 + (t_max - 25) * coef)
+        gr_min = grandeza * (1 + (t_min - 25) * coef)
+        gr_max = grandeza * (1 + (t_max - 25) * coef)
     
     return gr_min, gr_max
 
@@ -31,6 +33,44 @@ def validar(valor):
 # Valores Validos
 def vv(*args):
     return all(v != -1 and v is not None for v in args)
+
+
+def minimo_valido(valores, padrao=-1):
+    """Seleciona o menor limite informado, ignorando sentinelas -1 e None."""
+    validos = [valor for valor in valores if vv(valor)]
+    return min(validos) if validos else padrao
+
+
+def limite_strings_curto_circuito(corrente_maxima, isc_max):
+    """Calcula o limite inteiro de strings pela corrente de curto-circuito."""
+    if not vv(corrente_maxima, isc_max) or isc_max <= 0:
+        return -1
+    return math.trunc(corrente_maxima / isc_max)
+
+
+def limite_strings_operacao(corrente_maxima, impp_max, tolerancia=0):
+    """Calcula o limite inteiro de strings pela corrente de operação."""
+    if not vv(corrente_maxima, impp_max, tolerancia) or impp_max <= 0:
+        return -1
+    return math.trunc(corrente_maxima * (1 + tolerancia) / impp_max)
+
+
+def limites_modulos_serie(tensao_minima, tensao_maxima, tensao_modulo_minima, tensao_modulo_maxima):
+    """Calcula limites mínimo e máximo de módulos em série para uma faixa."""
+    valores = (tensao_minima, tensao_maxima, tensao_modulo_minima, tensao_modulo_maxima)
+    if not vv(*valores) or tensao_modulo_minima <= 0 or tensao_modulo_maxima <= 0:
+        return -1, -1
+    return (
+        math.ceil(tensao_minima / tensao_modulo_minima),
+        math.trunc(tensao_maxima / tensao_modulo_maxima),
+    )
+
+
+def limite_modulos_sobrecarga(potencia_nominal, sobrecarga, tolerancia, potencia_modulo):
+    """Calcula o total de módulos limitado pela potência admitida no inversor."""
+    if not vv(potencia_nominal, sobrecarga, tolerancia, potencia_modulo) or potencia_modulo <= 0:
+        return 0
+    return math.trunc(potencia_nominal * (1 + sobrecarga) * (1 + tolerancia) / potencia_modulo)
 
 # Decomposição em valores primos
 def mppt_index_dec(n):

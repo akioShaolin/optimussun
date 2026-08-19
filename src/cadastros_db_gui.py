@@ -9,8 +9,29 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import sqlite3
 import os
+import sys
+from pathlib import Path
 
-DATABASE_NAME = "optimus_sun.db"
+COLORS = {
+    "background": "#F4F7FA",
+    "surface": "#FFFFFF",
+    "primary": "#1F4E78",
+    "text": "#17212B",
+    "border": "#CBD5E1",
+}
+FONT_FAMILY = "Segoe UI"
+
+
+def external_path(filename):
+    """Resolve arquivos externos ao lado do script ou do executável."""
+    if getattr(sys, "frozen", False):
+        base_path = Path(sys.executable).resolve().parent
+    else:
+        base_path = Path(__file__).resolve().parent
+    return base_path / filename
+
+
+DATABASE_PATH = external_path("optimus_sun.db")
 
 class DatabaseManager:
     """Gerencia a conexão e operações no banco de dados SQLite."""
@@ -949,15 +970,25 @@ class App(tk.Tk):
         super().__init__()
         self.db_manager = db_manager
         self.title("Gerenciador Completo Optimus Sun DB")
-        # Aumentar tamanho da janela para acomodar mais abas e campos
+        self.configure(background=COLORS["background"])
 
         w_scr = self.winfo_screenwidth()
         h_scr = self.winfo_screenheight()
-        self.geometry(f"{w_scr}x{h_scr}+0+0") 
+        width = min(1440, max(960, int(w_scr * 0.9)))
+        height = min(900, max(640, int(h_scr * 0.85)))
+        self.geometry(f"{width}x{height}+{max(0, (w_scr-width)//2)}+{max(0, (h_scr-height)//2)}")
+        self.minsize(900, 600)
 
         # Estilo
         style = ttk.Style(self)
-        style.theme_use('clam') # Ou outro tema: alt, default, classic
+        style.theme_use('clam')
+        style.configure(".", font=(FONT_FAMILY, 10), background=COLORS["background"], foreground=COLORS["text"])
+        style.configure("TNotebook", background=COLORS["background"], bordercolor=COLORS["border"])
+        style.configure("TNotebook.Tab", padding=(12, 7))
+        style.map("TNotebook.Tab", foreground=[("selected", COLORS["primary"])])
+        style.configure("Treeview", rowheight=26, background=COLORS["surface"], fieldbackground=COLORS["surface"])
+        style.configure("Treeview.Heading", font=(FONT_FAMILY, 10, "bold"), foreground=COLORS["primary"])
+        style.configure("TButton", padding=(9, 5))
 
         # Notebook para abas
         self.notebook = ttk.Notebook(self)
@@ -996,23 +1027,16 @@ class App(tk.Tk):
 # Entry Point
 # ==============================================================================
 if __name__ == "__main__":
-    # Verifica se o banco de dados existe antes de iniciar
-    if not os.path.exists(DATABASE_NAME):
-        # Tenta criar as tabelas se o DB não existir
-        try:
-            # Assume que optimus_sun_db.py está no mesmo diretório
-            import optimus_sun_db 
-            optimus_sun_db.criar_tabela()
-            print(f"Banco de dados '{DATABASE_NAME}' e tabelas criados.")
-        except ImportError:
-             messagebox.showerror("Erro Crítico", f"Arquivo 'optimus_sun_db.py' não encontrado para criar o banco de dados inicial.")
-             exit()
-        except Exception as e:
-             messagebox.showerror("Erro Crítico", f"Falha ao criar tabelas no banco de dados: {e}")
-             exit()
+    if not DATABASE_PATH.exists():
+        messagebox.showerror(
+            "Erro Crítico",
+            f"Banco de dados externo não encontrado:\n{DATABASE_PATH}\n\n"
+            "Mantenha optimus_sun.db ao lado do aplicativo.",
+        )
+        raise SystemExit(1)
 
     try:
-        db_manager = DatabaseManager(DATABASE_NAME)
+        db_manager = DatabaseManager(str(DATABASE_PATH))
         app = App(db_manager)
         app.mainloop()
     except FileNotFoundError:
