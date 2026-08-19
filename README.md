@@ -33,7 +33,9 @@ A distribuição Windows é gerada com PyInstaller no modo `--onedir`. Por isso,
 
 ## Banco de dados externo
 
-O Optimus Sun utiliza o arquivo SQLite `optimus_sun.db` como banco de dados externo. Ele não é embutido no executável e deve permanecer acessível à aplicação.
+O Optimus Sun utiliza o arquivo SQLite `optimus_sun.db` como banco de dados externo. O banco `src/optimus_sun.db` é versionado junto ao projeto e funciona como banco-base do Optimus Sun.
+
+Na distribuição para Windows, uma cópia do banco deve permanecer ao lado do executável para ser utilizada e modificada localmente pela aplicação.
 
 O aplicativo principal consulta nesse banco os dados de inversores, módulos e demais parâmetros. O aplicativo de cadastros pode modificar o mesmo arquivo, permitindo que as duas aplicações compartilhem os mesmos dados.
 
