@@ -26,6 +26,9 @@ dist/
 *.exe
 
 # Bancos de dados locais
+*.db
+!src/optimus_sun.db
+
 *.db-journal
 *.db-shm
 *.db-wal
