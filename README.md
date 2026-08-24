@@ -18,6 +18,29 @@ A `v2.3.8` é uma release de estabilidade e interface, com correções nos cálc
 - Visualizações e gráficos interativos gerados com Matplotlib.
 - Resumo das capacidades e restrições do arranjo analisado.
 
+## Operação rápida
+
+O dimensionamento é atualizado automaticamente depois que um inversor e um módulo são selecionados:
+
+1. Escolha o **fabricante do inversor** e, em seguida, o modelo do inversor.
+2. Escolha o **fabricante do módulo** e, em seguida, o modelo do módulo.
+3. Confira a quantidade máxima de módulos, a sobrecarga admitida e as abas de cada MPPT.
+4. Use **Detalhes** para consultar os dados técnicos do inversor ou do módulo selecionado.
+5. Use **Cálculos** na aba do MPPT para comparar os limites de strings e de módulos por string.
+6. Use **Cálculos** ao lado de **Potência máxima no inversor** para abrir o resumo geral do arranjo.
+
+![Tela principal do Optimus Sun com um dimensionamento calculado](screenshots/scrsht_1.png)
+
+Na faixa de módulos por string, as cores têm os seguintes significados:
+
+- **Vermelho — Fora da faixa:** combinação não admitida pelos limites calculados.
+- **Amarelo — Faixa de operação:** quantidade de módulos compatível com a operação do MPPT.
+- **Verde — Carga máxima:** intervalo que também atende à condição de carga máxima.
+
+As caixas **Ignorar corrente de operação** e **Ignorar faixa de carga máxima** retiram o respectivo critério da determinação do limite. Use-as somente quando houver uma justificativa técnica e valide o resultado nos documentos dos fabricantes.
+
+Para conhecer todas as telas, os gráficos e a interpretação de cada resultado, consulte o [Guia de operação](docs/GUIA_DE_OPERACAO.md).
+
 ## Download
 
 As distribuições para Windows são disponibilizadas na seção **Releases** deste repositório.
@@ -82,6 +105,13 @@ python cadastros_db_gui.py
 
 ```text
 optimussun/
+├── docs/
+│   └── GUIA_DE_OPERACAO.md
+├── screenshots/
+│   ├── scrsht_1.png
+│   ├── scrsht_2.png
+│   ├── scrsht_3.png
+│   └── scrsht_4.png
 ├── src/
 │   ├── optimus_sun.py
 │   ├── optimus_lib.py
@@ -100,6 +130,8 @@ optimussun/
 - `src/optimus_lib.py`: funções auxiliares de validação e cálculo.
 - `src/cadastros_db_gui.py`: interface administrativa do banco de dados.
 - `src/optimus_sun.png` e `src/optimus_sun.ico`: identidade visual e ícone da aplicação.
+- `docs/GUIA_DE_OPERACAO.md`: procedimento detalhado de uso e interpretação dos resultados.
+- `screenshots/`: capturas das principais telas utilizadas na documentação.
 - `tests/`: testes automatizados dos cálculos e regressão com o banco operacional local.
 - `optimus_sun.db`: banco operacional externo, necessário em runtime e não versionado.
 
