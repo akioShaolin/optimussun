@@ -125,6 +125,7 @@ optimussun/
 │   └── optimus_sun.ico
 ├── tests/
 │   ├── test_compatibility_engine.py
+│   ├── test_compatibility_csv.py
 │   ├── test_compatibility_matrix.py
 │   ├── test_optimus_lib.py
 │   └── test_database_regression.py
@@ -140,6 +141,7 @@ optimussun/
 - `src/optimus_lib.py`: funções auxiliares de validação e cálculo.
 - `src/compatibility/`: modelos, carregamento SQLite e motor reutilizável de compatibilidade em desenvolvimento para a futura v2.5.0.
 - `tools/compatibility_matrix_gui.py`: interface provisória para montar e inspecionar matrizes de compatibilidade.
+- `src/compatibility/csv_io.py`: importação e exportação da representação visível da matriz em CSV.
 - `src/cadastros_db_gui.py`: interface administrativa do banco de dados.
 - `src/optimus_sun.db`: banco-base SQLite versionado e usado na execução pelo código-fonte.
 - `src/optimus_sun.png` e `src/optimus_sun.ico`: identidade visual e ícone da aplicação.
@@ -158,6 +160,20 @@ A matriz provisória pode ser executada, a partir da raiz do projeto, com:
 ```powershell
 py -3 -X utf8 -B tools\compatibility_matrix_gui.py
 ```
+
+Na própria janela, use **Exportar CSV** após calcular ou importar uma matriz. O
+arquivo é gravado em UTF-8 com BOM, separado por ponto e vírgula e com números
+em formato decimal brasileiro. Cada módulo ocupa três colunas: quantidade,
+potência em kW e sobrecarga. A exportação usa exatamente o resultado exibido na
+matriz (`display_result`) e preserva rótulos repetidos/personalizados e a ordem
+manual dos módulos.
+
+**Importar CSV** carrega e mostra os valores existentes no arquivo sem executar
+o motor. Modelos com correspondência textual exata no banco ativo são
+associados automaticamente; os demais ficam marcados como não associados e
+podem ser vinculados manualmente pelos botões **Associar**. Somente
+**Recalcular matriz** substitui os valores importados por novos cálculos. Consulte
+o [formato CSV da matriz](docs/CSV_MATRIZ.md) para a estrutura e as limitações.
 
 ## Tecnologias utilizadas
 

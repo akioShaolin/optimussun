@@ -10,6 +10,7 @@ O pacote `src/compatibility/` calcula a maior configuração eletricamente admis
 - `engine.py`: compensação térmica, enumeração das configurações, otimização e fator limitante.
 - `repository.py`: conversão dos registros de `src/optimus_sun.db` para os modelos do motor.
 - `matrix.py`: seleções repetíveis, rótulos, ordenação e armazenamento das células calculadas.
+- `csv_io.py`: serialização e leitura da representação visível da matriz, sem duplicar cálculos do motor.
 - `__init__.py`: API pública do pacote.
 
 ## Entrada e saída
@@ -57,19 +58,24 @@ Campos obrigatórios com `None`, `-1`, zero ou valores inválidos não são tran
 
 ## Estado da implementação
 
-As duas primeiras etapas entregam o motor e uma interface provisória de validação. A matriz permite:
+As três primeiras etapas entregam o motor, uma interface provisória de validação e intercâmbio CSV. A matriz permite:
 
 - selecionar vários inversores e módulos ativos;
 - repetir inversores com rótulos independentes;
 - ordenar inversores pelo texto exibido e módulos manualmente;
 - configurar sobrecarga cadastrada ou personalizada independentemente em cada ocorrência de inversor;
 - inspecionar os dois modos de cada célula sem recalculá-la.
+- exportar o `display_result` em UTF-8 com BOM e separador `;`;
+- importar valores preservando linhas, colunas, ordem, repetições e `N/D`;
+- associar manualmente equipamentos que não tiveram correspondência textual exata;
+- recalcular valores importados somente por ação explícita do usuário.
 
 Quando ignorar a corrente de operação aumenta a quantidade e produz um resultado válido, a matriz usa esse resultado como `display_result`. Quantidade, potência e sobrecarga são sempre apresentadas a partir do mesmo objeto, com `↗` indicando o modo alternativo. Os resultados `normal` e `ignored` continuam preservados integralmente nos detalhes. Se não houver ganho ou se o resultado ignorando corrente for inválido, o resultado normal permanece como principal.
 
-Ainda não estão implementados:
-
-- exportação e importação CSV;
-- associação manual de equipamentos importados.
+Valores importados são representados separadamente dos resultados técnicos do
+motor. Assim, abrir um arquivo nunca inventa fator limitante, strings ou MPPTs e
+nunca dispara cálculo silencioso. Os detalhes técnicos voltam a ficar
+disponíveis depois que todos os equipamentos forem associados e a matriz for
+recalculada. O contrato completo está em [CSV_MATRIZ.md](CSV_MATRIZ.md).
 
 O cabeçalho e a coluna de inversores ainda rolam junto com o restante da matriz. Congelá-los permanece como melhoria visual futura.

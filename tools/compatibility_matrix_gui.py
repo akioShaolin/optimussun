@@ -7,7 +7,7 @@ import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -18,7 +18,11 @@ sys.path.insert(0, str(SRC_DIR))
 from compatibility import (  # noqa: E402
     CompatibilityMatrix,
     CompatibilityOptions,
+    CSVFormatError,
+    ImportedCellResult,
     LimitingFactor,
+    export_matrix_csv,
+    import_matrix_csv,
     list_active_inverters,
     list_active_modules,
 )
@@ -52,7 +56,12 @@ def decimal_pt(value, places=2):
 
 def matrix_values(cell):
     result = cell.display_result
-    if result.limiting_factor == LimitingFactor.MISSING_DATA:
+    invalid = (
+        not result.valid
+        if isinstance(cell, ImportedCellResult)
+        else result.limiting_factor == LimitingFactor.MISSING_DATA
+    )
+    if invalid:
         return "N/D", "N/D", "N/D"
     if cell.uses_ignored_result:
         quantity = f"{cell.normal.quantity} → {cell.ignored.quantity} ↗"
@@ -100,8 +109,27 @@ def result_details(result):
 def overload_label(selection):
     if selection.overload_mode == "custom":
         return f"Personalizada ({decimal_pt(selection.custom_overload_percent)}%)"
+    if not selection.associated:
+        return "Pendente de associação"
     registered = selection.equipment.overload_percent
     return f"Cadastrada ({decimal_pt(registered)}%)"
+
+
+def imported_details(cell):
+    value = cell.imported_value
+    if not value.valid:
+        values = "Quantidade: N/D\nPotência DC: N/D\nSobrecarga: N/D"
+    else:
+        values = (
+            f"Quantidade: {value.quantity}\n"
+            f"Potência DC: {decimal_pt(value.dc_power_kw)} kW\n"
+            f"Sobrecarga: {decimal_pt(value.overload_percent)}%"
+        )
+    return (
+        "Valor importado de CSV.\n\n"
+        f"{values}\n\n"
+        "Detalhes técnicos completos estarão disponíveis após recalcular a matriz."
+    )
 
 
 class OverloadDialog(tk.Toplevel):
@@ -203,6 +231,7 @@ class CompatibilityMatrixGUI(tk.Tk):
 
         self.status_text = tk.StringVar(value="Monte a seleção e clique em Calcular matriz.")
         self._build_interface()
+        self._update_action_states()
 
     def _build_interface(self):
         controls = ttk.Frame(self, padding=(10, 10, 10, 4))
@@ -254,6 +283,9 @@ class CompatibilityMatrixGUI(tk.Tk):
         ttk.Button(buttons, text="Sobrecarga", command=self.configure_overload).pack(
             side="left", padx=(6, 0)
         )
+        ttk.Button(buttons, text="Associar", command=self.associate_inverter).pack(
+            side="left", padx=(6, 0)
+        )
         ttk.Button(buttons, text="Remover", command=self.remove_inverter).pack(
             side="left", padx=6
         )
@@ -299,10 +331,18 @@ class CompatibilityMatrixGUI(tk.Tk):
         ttk.Button(buttons, text="Remover", command=self.remove_module).pack(
             side="left", padx=(4, 0)
         )
+        ttk.Button(buttons, text="Associar", command=self.associate_module).pack(
+            side="left", padx=(6, 0)
+        )
 
     def _build_calculation_controls(self, parent):
         frame = ttk.Frame(parent)
         frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(frame, text="Importar CSV", command=self.import_csv).pack(side="left")
+        self.export_button = ttk.Button(
+            frame, text="Exportar CSV", command=self.export_csv
+        )
+        self.export_button.pack(side="left", padx=6)
         self.calculate_button = ttk.Button(
             frame, text="Calcular matriz", command=self.start_calculation
         )
@@ -369,6 +409,7 @@ class CompatibilityMatrixGUI(tk.Tk):
                 overload_label(item),
             ),
         )
+        self._selection_changed()
 
     def _selected_key(self, tree):
         selection = tree.selection()
@@ -397,6 +438,7 @@ class CompatibilityMatrixGUI(tk.Tk):
         values = list(self.inverter_tree.item(str(key), "values"))
         values[2] = label.strip()
         self.inverter_tree.item(str(key), values=values)
+        self._selection_changed(preserve_imported=True)
 
     def configure_overload(self):
         if not self._guard_busy():
@@ -405,6 +447,13 @@ class CompatibilityMatrixGUI(tk.Tk):
         if key is None:
             return
         selection = next(item for item in self.state_model.inverters if item.key == key)
+        if not selection.associated:
+            messagebox.showinfo(
+                "Associação necessária",
+                "Associe esta linha a um inversor ativo antes de configurar a sobrecarga.",
+                parent=self,
+            )
+            return
         dialog = OverloadDialog(self, selection)
         self.wait_window(dialog)
         if dialog.result is None:
@@ -415,6 +464,7 @@ class CompatibilityMatrixGUI(tk.Tk):
         values = list(self.inverter_tree.item(str(key), "values"))
         values[3] = overload_label(updated)
         self.inverter_tree.item(str(key), values=values)
+        self._selection_changed(preserve_imported=True)
 
     def remove_inverter(self):
         if not self._guard_busy():
@@ -423,6 +473,7 @@ class CompatibilityMatrixGUI(tk.Tk):
         if key is not None:
             self.state_model.remove_inverter(key)
             self.inverter_tree.delete(str(key))
+            self._selection_changed(preserve_imported=True)
 
     def add_module(self):
         if not self._guard_busy():
@@ -437,6 +488,7 @@ class CompatibilityMatrixGUI(tk.Tk):
             iid=str(item.key),
             values=(equipment.manufacturer, equipment.model),
         )
+        self._selection_changed()
 
     def remove_module(self):
         if not self._guard_busy():
@@ -445,6 +497,7 @@ class CompatibilityMatrixGUI(tk.Tk):
         if key is not None:
             self.state_model.remove_module(key)
             self.module_tree.delete(str(key))
+            self._selection_changed(preserve_imported=True)
 
     def move_module(self, destination):
         if not self._guard_busy():
@@ -457,6 +510,129 @@ class CompatibilityMatrixGUI(tk.Tk):
         for position, item_id in enumerate(ordered_keys):
             self.module_tree.move(item_id, "", position)
         self.module_tree.selection_set(str(key))
+        self._selection_changed(preserve_imported=True)
+
+    def associate_inverter(self):
+        if not self._guard_busy():
+            return
+        key = self._selected_key(self.inverter_tree)
+        equipment = self.inverter_lookup.get(self.inverter_combo.get())
+        if key is None or equipment is None:
+            return
+        self.state_model.associate_inverter(key, equipment)
+        self._refresh_selection_trees()
+        self.inverter_tree.selection_set(str(key))
+        self._selection_changed(preserve_imported=True)
+
+    def associate_module(self):
+        if not self._guard_busy():
+            return
+        key = self._selected_key(self.module_tree)
+        equipment = self.module_lookup.get(self.module_combo.get())
+        if key is None or equipment is None:
+            return
+        self.state_model.associate_module(key, equipment)
+        self._refresh_selection_trees()
+        self.module_tree.selection_set(str(key))
+        self._selection_changed(preserve_imported=True)
+
+    def _selection_changed(self, preserve_imported=False):
+        if preserve_imported and self.calculation and self.calculation.source == "imported":
+            try:
+                self.calculation = self.state_model.snapshot_with_cells(self.calculation)
+                self._render_matrix()
+                self.status_text.set("Matriz importada — valores ainda não recalculados.")
+                self._update_action_states()
+                return
+            except ValueError:
+                pass
+        self.calculation = None
+        self._clear_matrix()
+        ttk.Label(
+            self.matrix_frame, text="Seleção alterada. Calcule novamente a matriz."
+        ).grid(padx=20, pady=20)
+        self.status_text.set("Seleção alterada — cálculo necessário.")
+        self._update_action_states()
+
+    def _refresh_selection_trees(self):
+        self.inverter_tree.delete(*self.inverter_tree.get_children())
+        for item in self.state_model.inverters:
+            equipment = item.equipment
+            self.inverter_tree.insert(
+                "", "end", iid=str(item.key), values=(
+                    equipment.manufacturer if equipment else "Não associado",
+                    equipment.model if equipment else "—",
+                    item.display_label,
+                    overload_label(item),
+                )
+            )
+        self.module_tree.delete(*self.module_tree.get_children())
+        for item in self.state_model.modules:
+            equipment = item.equipment
+            self.module_tree.insert(
+                "", "end", iid=str(item.key), values=(
+                    equipment.manufacturer if equipment else "Não associado",
+                    item.display_model,
+                )
+            )
+
+    def import_csv(self):
+        if not self._guard_busy():
+            return
+        path = filedialog.askopenfilename(
+            parent=self,
+            title="Importar matriz CSV",
+            filetypes=(("Arquivos CSV", "*.csv"), ("Todos os arquivos", "*.*")),
+        )
+        if not path:
+            return
+        try:
+            imported = import_matrix_csv(
+                path, self.available_inverters, self.available_modules
+            )
+        except (OSError, CSVFormatError) as error:
+            messagebox.showerror("CSV inválido", str(error), parent=self)
+            return
+        self.state_model = imported.matrix
+        self.calculation = imported.calculation
+        self._refresh_selection_trees()
+        self._render_matrix()
+        pending_inverters = sum(not item.associated for item in self.state_model.inverters)
+        pending_modules = sum(not item.associated for item in self.state_model.modules)
+        self.status_text.set(
+            "Matriz importada — valores ainda não recalculados. "
+            f"Pendências: {pending_inverters} inversor(es), {pending_modules} módulo(s)."
+        )
+        self._update_action_states()
+
+    def export_csv(self):
+        if self.calculation is None:
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Exportar matriz CSV",
+            defaultextension=".csv",
+            initialfile="compatibilidade_optimus_sun.csv",
+            filetypes=(("Arquivos CSV", "*.csv"),),
+        )
+        if not path:
+            return
+        try:
+            export_matrix_csv(self.calculation, path)
+        except OSError as error:
+            messagebox.showerror("Falha ao exportar", str(error), parent=self)
+            return
+        self.status_text.set(f"CSV exportado: {Path(path).name}")
+
+    def _update_action_states(self):
+        self.export_button.configure(
+            state="normal" if self.calculation is not None else "disabled"
+        )
+        self.calculate_button.configure(
+            text="Recalcular matriz"
+            if self.calculation and self.calculation.source == "imported"
+            else "Calcular matriz"
+        )
 
     def start_calculation(self):
         if self.calculating:
@@ -464,6 +640,23 @@ class CompatibilityMatrixGUI(tk.Tk):
         try:
             if not self.state_model.inverters or not self.state_model.modules:
                 raise ValueError("Adicione ao menos um inversor e um módulo.")
+            pending_inverters = [
+                item.display_label
+                for item in self.state_model.inverters
+                if not item.associated
+            ]
+            pending_modules = [
+                item.display_model for item in self.state_model.modules if not item.associated
+            ]
+            if pending_inverters or pending_modules:
+                details = []
+                if pending_inverters:
+                    details.append("Inversores: " + ", ".join(pending_inverters))
+                if pending_modules:
+                    details.append("Módulos: " + ", ".join(pending_modules))
+                raise ValueError(
+                    "Associe os equipamentos antes de recalcular.\n" + "\n".join(details)
+                )
         except ValueError as error:
             messagebox.showerror("Não foi possível calcular", str(error))
             return
@@ -502,6 +695,7 @@ class CompatibilityMatrixGUI(tk.Tk):
             return
         self.calculation = payload
         self._render_matrix()
+        self._update_action_states()
         self.status_text.set(
             f"Matriz pronta: {len(payload.inverters)} × {len(payload.modules)}."
         )
@@ -535,10 +729,10 @@ class CompatibilityMatrixGUI(tk.Tk):
         for module_position, module in enumerate(calculation.modules):
             column = 1 + module_position * 3
             equipment = module.equipment
-            self._header_label(equipment.model, 0, column, 3)
+            self._header_label(module.display_model, 0, column, 3)
             self._header_label(
-                f"{equipment.manufacturer} — potência nominal: "
-                f"{equipment.nominal_power_w:.0f} W",
+                f"{equipment.manufacturer + ' — ' if equipment else 'Não associado — '}"
+                f"potência nominal: {module.nominal_power_w:.0f} W",
                 1,
                 column,
                 3,
@@ -550,7 +744,12 @@ class CompatibilityMatrixGUI(tk.Tk):
         for row_position, inverter in enumerate(calculation.inverters, start=3):
             equipment = inverter.equipment
             self._body_label(
-                f"{inverter.display_label}\n{equipment.manufacturer} — {equipment.model}",
+                f"{inverter.display_label}\n"
+                + (
+                    f"{equipment.manufacturer} — {equipment.model}"
+                    if equipment
+                    else "Não associado"
+                ),
                 row_position,
                 0,
                 width=34,
@@ -591,14 +790,14 @@ class CompatibilityMatrixGUI(tk.Tk):
 
     def _show_details(self, inverter, module, cell):
         window = tk.Toplevel(self)
-        window.title(f"Detalhes — {inverter.display_label} × {module.equipment.model}")
+        window.title(f"Detalhes — {inverter.display_label} × {module.display_model}")
         window.geometry("1000x620")
         window.minsize(760, 480)
         heading = (
-            f"Modelo real: {inverter.equipment.model}\n"
+            f"Modelo real: {inverter.equipment.model if inverter.equipment else 'Não associado'}\n"
             f"Texto da linha: {inverter.display_label}\n"
             f"Sobrecarga da linha: {overload_label(inverter)}\n"
-            f"Módulo: {module.equipment.manufacturer} — {module.equipment.model}"
+            f"Módulo: {module.display_model}"
         )
         ttk.Label(window, text=heading, font=("Segoe UI", 11, "bold")).pack(
             fill="x", padx=12, pady=12
@@ -608,20 +807,35 @@ class CompatibilityMatrixGUI(tk.Tk):
         content.columnconfigure(0, weight=1, uniform="details")
         content.columnconfigure(1, weight=1, uniform="details")
         content.rowconfigure(0, weight=1)
-        for column, title, result in (
-            (0, "Modo normal", cell.normal),
-            (1, "Ignorando corrente de operação", cell.ignored),
-        ):
-            frame = ttk.LabelFrame(content, text=title, padding=8)
-            frame.grid(row=0, column=column, sticky="nsew", padx=(0, 6) if column == 0 else (6, 0))
+        if isinstance(cell, ImportedCellResult):
+            frame = ttk.LabelFrame(content, text="Valor importado", padding=8)
+            frame.grid(row=0, column=0, columnspan=2, sticky="nsew")
             text = tk.Text(frame, wrap="word", padx=8, pady=8)
-            text.insert("1.0", result_details(result))
+            text.insert("1.0", imported_details(cell))
             text.configure(state="disabled")
             text.pack(fill="both", expand=True)
-        difference = cell.ignored.quantity - cell.normal.quantity
+            difference_text = "Diferença de quantidade: disponível após recalcular"
+        else:
+            for column, title, result in (
+                (0, "Modo normal", cell.normal),
+                (1, "Ignorando corrente de operação", cell.ignored),
+            ):
+                frame = ttk.LabelFrame(content, text=title, padding=8)
+                frame.grid(
+                    row=0,
+                    column=column,
+                    sticky="nsew",
+                    padx=(0, 6) if column == 0 else (6, 0),
+                )
+                text = tk.Text(frame, wrap="word", padx=8, pady=8)
+                text.insert("1.0", result_details(result))
+                text.configure(state="disabled")
+                text.pack(fill="both", expand=True)
+            difference = cell.ignored.quantity - cell.normal.quantity
+            difference_text = f"Diferença de quantidade: {difference:+d} módulo(s)"
         ttk.Label(
             window,
-            text=f"Diferença de quantidade: {difference:+d} módulo(s)",
+            text=difference_text,
             font=("Segoe UI", 11, "bold"),
         ).pack(pady=(0, 12))
 

@@ -11,10 +11,14 @@ from .repository import load_inverter, load_module
 @dataclass(frozen=True)
 class InverterSelection:
     key: int
-    equipment: EquipmentSummary
+    equipment: EquipmentSummary | None
     display_label: str
     overload_mode: str = "registered"
     custom_overload_percent: float | None = None
+
+    @property
+    def associated(self):
+        return self.equipment is not None and self.equipment.database_id is not None
 
     def compatibility_options(self, base_options=None):
         base = base_options or CompatibilityOptions()
@@ -29,7 +33,13 @@ class InverterSelection:
 @dataclass(frozen=True)
 class ModuleSelection:
     key: int
-    equipment: EquipmentSummary
+    equipment: EquipmentSummary | None
+    display_model: str
+    nominal_power_w: float
+
+    @property
+    def associated(self):
+        return self.equipment is not None and self.equipment.database_id is not None
 
 
 @dataclass(frozen=True)
@@ -47,10 +57,32 @@ class MatrixCellResult:
 
 
 @dataclass(frozen=True)
+class ImportedCellValue:
+    quantity: int | None
+    dc_power_kw: float | None
+    overload_percent: float | None
+    valid: bool
+
+
+@dataclass(frozen=True)
+class ImportedCellResult:
+    imported_value: ImportedCellValue
+
+    @property
+    def uses_ignored_result(self):
+        return False
+
+    @property
+    def display_result(self):
+        return self.imported_value
+
+
+@dataclass(frozen=True)
 class MatrixCalculation:
     inverters: tuple[InverterSelection, ...]
     modules: tuple[ModuleSelection, ...]
-    cells: dict[tuple[int, int], MatrixCellResult]
+    cells: dict[tuple[int, int], MatrixCellResult | ImportedCellResult]
+    source: str = "calculated"
 
     def cell(self, inverter_key, module_key):
         return self.cells[(inverter_key, module_key)]
@@ -73,6 +105,11 @@ class CompatibilityMatrix:
         selection = InverterSelection(
             self._key(), equipment, display_label or equipment.model
         )
+        self.inverters.append(selection)
+        return selection
+
+    def add_imported_inverter(self, display_label, equipment=None):
+        selection = InverterSelection(self._key(), equipment, display_label)
         self.inverters.append(selection)
         return selection
 
@@ -113,6 +150,18 @@ class CompatibilityMatrix:
                 return
         raise KeyError(key)
 
+    def associate_inverter(self, key, equipment):
+        for position, item in enumerate(self.inverters):
+            if item.key == key:
+                self.inverters[position] = replace(
+                    item,
+                    equipment=equipment,
+                    overload_mode="registered",
+                    custom_overload_percent=None,
+                )
+                return
+        raise KeyError(key)
+
     def sorted_inverters(self):
         return tuple(
             sorted(
@@ -122,9 +171,32 @@ class CompatibilityMatrix:
         )
 
     def add_module(self, equipment):
-        selection = ModuleSelection(self._key(), equipment)
+        selection = ModuleSelection(
+            self._key(), equipment, equipment.model, equipment.nominal_power_w
+        )
         self.modules.append(selection)
         return selection
+
+
+    def add_imported_module(self, display_model, nominal_power_w, equipment=None):
+        model = display_model.strip()
+        power = float(nominal_power_w)
+        if not model:
+            raise ValueError("O modelo exibido do módulo não pode ficar vazio.")
+        if not math.isfinite(power) or power <= 0:
+            raise ValueError("A potência nominal do módulo deve ser positiva.")
+        selection = ModuleSelection(
+            self._key(), equipment, model, power
+        )
+        self.modules.append(selection)
+        return selection
+
+    def associate_module(self, key, equipment):
+        for position, item in enumerate(self.modules):
+            if item.key == key:
+                self.modules[position] = replace(item, equipment=equipment)
+                return
+        raise KeyError(key)
 
     def remove_module(self, key):
         self.modules = [item for item in self.modules if item.key != key]
@@ -159,12 +231,20 @@ class CompatibilityMatrix:
         ordered_inverters = self.sorted_inverters()
         ordered_modules = tuple(self.modules)
         for inverter_selection in ordered_inverters:
+            if not inverter_selection.associated:
+                raise ValueError(
+                    f"Inversor não associado: {inverter_selection.display_label}"
+                )
             inverter_id = inverter_selection.equipment.database_id
             if inverter_id not in inverter_cache:
                 inverter_cache[inverter_id] = load_inverter(connection, inverter_id)
             inverter = inverter_cache[inverter_id]
             row_options = inverter_selection.compatibility_options(options)
             for module_selection in ordered_modules:
+                if not module_selection.associated:
+                    raise ValueError(
+                        f"Módulo não associado: {module_selection.display_model}"
+                    )
                 module_id = module_selection.equipment.database_id
                 if module_id not in module_cache:
                     module_cache[module_id] = load_module(connection, module_id)
@@ -176,3 +256,13 @@ class CompatibilityMatrix:
                     MatrixCellResult(normal, ignored)
                 )
         return MatrixCalculation(ordered_inverters, ordered_modules, cells)
+
+    def snapshot_with_cells(self, calculation):
+        """Reaplica seleção/ordem aos valores existentes sem recalcular."""
+        inverters = self.sorted_inverters()
+        modules = tuple(self.modules)
+        required = {(row.key, module.key) for row in inverters for module in modules}
+        if not required.issubset(calculation.cells):
+            raise ValueError("A seleção possui células ainda não calculadas.")
+        cells = {key: calculation.cells[key] for key in required}
+        return MatrixCalculation(inverters, modules, cells, calculation.source)
