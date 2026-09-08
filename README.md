@@ -54,17 +54,15 @@ Para utilizar uma release:
 
 A distribuição Windows é gerada com PyInstaller no modo `--onedir`. Por isso, o executável depende dos demais arquivos da pasta distribuída e não deve ser movido ou utilizado isoladamente.
 
-## Banco de dados externo
+## Banco de dados
 
-O Optimus Sun utiliza o arquivo SQLite `optimus_sun.db` como banco de dados externo. O banco `src/optimus_sun.db` é versionado junto ao projeto e funciona como banco-base do Optimus Sun.
+O arquivo SQLite `src/optimus_sun.db` é o banco-base do projeto, é versionado no Git e é utilizado diretamente na execução pelo código-fonte.
 
-Na distribuição para Windows, uma cópia do banco deve permanecer ao lado do executável para ser utilizada e modificada localmente pela aplicação.
+Na distribuição para Windows, uma cópia de `optimus_sun.db` deve permanecer ao lado do executável. Ela é externa ao bundle do PyInstaller, não fica embutida no `.exe` e pode ser modificada localmente pela aplicação.
 
 O aplicativo principal consulta nesse banco os dados de inversores, módulos e demais parâmetros. O aplicativo de cadastros pode modificar o mesmo arquivo, permitindo que as duas aplicações compartilhem os mesmos dados.
 
-Na distribuição Windows, mantenha `optimus_sun.db` na mesma pasta do executável principal. Ao executar pelo código-fonte, mantenha o banco dentro de `src/`, ao lado de `optimus_sun.py`.
-
-O banco é um arquivo operacional local e não faz parte dos arquivos versionados no repositório.
+Na distribuição Windows, mantenha a cópia de `optimus_sun.db` na mesma pasta do executável principal. Ao executar pelo código-fonte, utilize o banco-base já presente em `src/`, ao lado de `optimus_sun.py`.
 
 ## Aplicativo de cadastros
 
@@ -88,7 +86,7 @@ Tkinter costuma acompanhar a instalação oficial do Python para Windows. Instal
 pip install matplotlib pillow
 ```
 
-Coloque `optimus_sun.db` dentro de `src/` e execute o aplicativo principal a partir da raiz do repositório:
+O repositório já contém o banco-base `src/optimus_sun.db`. Execute o aplicativo principal a partir da raiz do repositório:
 
 ```bash
 python src/optimus_sun.py
@@ -113,12 +111,19 @@ optimussun/
 │   ├── scrsht_3.png
 │   └── scrsht_4.png
 ├── src/
+│   ├── compatibility/
+│   │   ├── __init__.py
+│   │   ├── engine.py
+│   │   ├── models.py
+│   │   └── repository.py
 │   ├── optimus_sun.py
 │   ├── optimus_lib.py
 │   ├── cadastros_db_gui.py
+│   ├── optimus_sun.db
 │   ├── optimus_sun.png
 │   └── optimus_sun.ico
 ├── tests/
+│   ├── test_compatibility_engine.py
 │   ├── test_optimus_lib.py
 │   └── test_database_regression.py
 ├── .gitignore
@@ -128,16 +133,19 @@ optimussun/
 
 - `src/optimus_sun.py`: aplicação principal e interface de dimensionamento.
 - `src/optimus_lib.py`: funções auxiliares de validação e cálculo.
+- `src/compatibility/`: modelos, carregamento SQLite e motor reutilizável de compatibilidade em desenvolvimento para a futura v2.5.0.
 - `src/cadastros_db_gui.py`: interface administrativa do banco de dados.
+- `src/optimus_sun.db`: banco-base SQLite versionado e usado na execução pelo código-fonte.
 - `src/optimus_sun.png` e `src/optimus_sun.ico`: identidade visual e ícone da aplicação.
 - `docs/GUIA_DE_OPERACAO.md`: procedimento detalhado de uso e interpretação dos resultados.
 - `screenshots/`: capturas das principais telas utilizadas na documentação.
 - `tests/`: testes automatizados dos cálculos e regressão com o banco operacional local.
-- `optimus_sun.db`: banco operacional externo, necessário em runtime e não versionado.
 
 ## Arquitetura básica
 
-A interface principal em Tkinter coleta a seleção do inversor e do módulo, consulta seus parâmetros no banco SQLite e utiliza as funções de `optimus_lib.py` para apoiar as validações e os cálculos. Os resultados são organizados na própria interface, com gráficos produzidos pelo Matplotlib. O aplicativo de cadastros atua separadamente sobre o mesmo banco externo.
+A interface principal em Tkinter coleta a seleção do inversor e do módulo, consulta seus parâmetros no banco SQLite e utiliza as funções de `optimus_lib.py` para apoiar as validações e os cálculos. Os resultados são organizados na própria interface, com gráficos produzidos pelo Matplotlib. O aplicativo de cadastros atua separadamente sobre o mesmo banco.
+
+Na branch de desenvolvimento da futura v2.5.0, `src/compatibility/` fornece um motor independente da GUI. Ele recebe dados estruturados do inversor, módulo, MPPTs e opções da análise, enumera configurações fisicamente possíveis e devolve um resultado estruturado. Essa funcionalidade ainda não altera a versão publicada v2.3.8 nem está integrada ao layout principal. Consulte a [documentação do motor de compatibilidade](docs/MOTOR_DE_COMPATIBILIDADE.md).
 
 ## Tecnologias utilizadas
 
