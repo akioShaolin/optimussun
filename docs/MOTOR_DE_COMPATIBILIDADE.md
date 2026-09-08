@@ -9,6 +9,7 @@ O pacote `src/compatibility/` calcula a maior configuração eletricamente admis
 - `models.py`: modelos imutáveis de inversor, módulo, MPPT, opções e resultado.
 - `engine.py`: compensação térmica, enumeração das configurações, otimização e fator limitante.
 - `repository.py`: conversão dos registros de `src/optimus_sun.db` para os modelos do motor.
+- `matrix.py`: seleções repetíveis, rótulos, ordenação e armazenamento das células calculadas.
 - `__init__.py`: API pública do pacote.
 
 ## Entrada e saída
@@ -36,7 +37,7 @@ O pacote `src/compatibility/` calcula a maior configuração eletricamente admis
 
 Em empates, o motor prefere a distribuição com menor diferença de quantidade entre MPPTs e, depois, o menor número total de strings.
 
-Compensações, limites por MPPT e resultados são armazenados em caches limitados. Isso torna consultas repetidas praticamente imediatas e evita refazer trabalho quando uma matriz é revisitada; a futura interface ainda deverá executar a primeira geração de matrizes grandes fora da thread gráfica.
+Compensações, limites por MPPT e resultados são armazenados em caches limitados. Isso torna consultas repetidas praticamente imediatas e evita refazer trabalho quando uma matriz é revisitada. A interface provisória executa a geração fora da thread gráfica.
 
 ## Sobrecarga
 
@@ -56,12 +57,19 @@ Campos obrigatórios com `None`, `-1`, zero ou valores inválidos não são tran
 
 ## Estado da implementação
 
-Esta primeira etapa entrega o motor e seus testes. Ainda não estão integrados:
+As duas primeiras etapas entregam o motor e uma interface provisória de validação. A matriz permite:
 
-- seleção múltipla de inversores e módulos;
-- repetição e rótulos personalizados de inversores;
-- ordenação e preview da matriz;
+- selecionar vários inversores e módulos ativos;
+- repetir inversores com rótulos independentes;
+- ordenar inversores pelo texto exibido e módulos manualmente;
+- configurar sobrecarga cadastrada ou personalizada independentemente em cada ocorrência de inversor;
+- inspecionar os dois modos de cada célula sem recalculá-la.
+
+Quando ignorar a corrente de operação aumenta a quantidade e produz um resultado válido, a matriz usa esse resultado como `display_result`. Quantidade, potência e sobrecarga são sempre apresentadas a partir do mesmo objeto, com `↗` indicando o modo alternativo. Os resultados `normal` e `ignored` continuam preservados integralmente nos detalhes. Se não houver ganho ou se o resultado ignorando corrente for inválido, o resultado normal permanece como principal.
+
+Ainda não estão implementados:
+
 - exportação e importação CSV;
 - associação manual de equipamentos importados.
 
-Esses itens permanecem para as etapas seguintes, depois da consolidação do motor.
+O cabeçalho e a coluna de inversores ainda rolam junto com o restante da matriz. Congelá-los permanece como melhoria visual futura.

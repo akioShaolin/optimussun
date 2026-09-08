@@ -114,6 +114,7 @@ optimussun/
 │   ├── compatibility/
 │   │   ├── __init__.py
 │   │   ├── engine.py
+│   │   ├── matrix.py
 │   │   ├── models.py
 │   │   └── repository.py
 │   ├── optimus_sun.py
@@ -124,8 +125,12 @@ optimussun/
 │   └── optimus_sun.ico
 ├── tests/
 │   ├── test_compatibility_engine.py
+│   ├── test_compatibility_matrix.py
 │   ├── test_optimus_lib.py
 │   └── test_database_regression.py
+├── tools/
+│   ├── compatibility_demo.py
+│   └── compatibility_matrix_gui.py
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -134,6 +139,7 @@ optimussun/
 - `src/optimus_sun.py`: aplicação principal e interface de dimensionamento.
 - `src/optimus_lib.py`: funções auxiliares de validação e cálculo.
 - `src/compatibility/`: modelos, carregamento SQLite e motor reutilizável de compatibilidade em desenvolvimento para a futura v2.5.0.
+- `tools/compatibility_matrix_gui.py`: interface provisória para montar e inspecionar matrizes de compatibilidade.
 - `src/cadastros_db_gui.py`: interface administrativa do banco de dados.
 - `src/optimus_sun.db`: banco-base SQLite versionado e usado na execução pelo código-fonte.
 - `src/optimus_sun.png` e `src/optimus_sun.ico`: identidade visual e ícone da aplicação.
@@ -146,6 +152,12 @@ optimussun/
 A interface principal em Tkinter coleta a seleção do inversor e do módulo, consulta seus parâmetros no banco SQLite e utiliza as funções de `optimus_lib.py` para apoiar as validações e os cálculos. Os resultados são organizados na própria interface, com gráficos produzidos pelo Matplotlib. O aplicativo de cadastros atua separadamente sobre o mesmo banco.
 
 Na branch de desenvolvimento da futura v2.5.0, `src/compatibility/` fornece um motor independente da GUI. Ele recebe dados estruturados do inversor, módulo, MPPTs e opções da análise, enumera configurações fisicamente possíveis e devolve um resultado estruturado. Essa funcionalidade ainda não altera a versão publicada v2.3.8 nem está integrada ao layout principal. Consulte a [documentação do motor de compatibilidade](docs/MOTOR_DE_COMPATIBILIDADE.md).
+
+A matriz provisória pode ser executada, a partir da raiz do projeto, com:
+
+```powershell
+py -3 -X utf8 -B tools\compatibility_matrix_gui.py
+```
 
 ## Tecnologias utilizadas
 

@@ -19,6 +19,15 @@ class LimitingFactor(str, Enum):
 
 
 @dataclass(frozen=True)
+class EquipmentSummary:
+    database_id: int
+    manufacturer: str
+    model: str
+    nominal_power_w: Optional[float] = None
+    overload_percent: Optional[float] = None
+
+
+@dataclass(frozen=True)
 class MPPTData:
     index: int
     number_of_inputs: int
