@@ -16,6 +16,16 @@ from optimus_lib import (  # noqa: E402
     limite_strings_operacao,
     limites_modulos_serie,
 )
+from compatibility import (  # noqa: E402
+    LimitingFactor,
+    compare_operating_current_modes,
+    list_active_inverters,
+    list_active_modules,
+    list_inverters,
+    list_modules,
+    load_inverter,
+    load_module,
+)
 
 
 @unittest.skipUnless(DB_PATH.exists(), "banco operacional local não disponível")
@@ -62,6 +72,78 @@ class RealDatabaseRegressionTests(unittest.TestCase):
                 ),
             )
             self.assertGreater(voc_max, 0)
+
+    def test_active_selector_lists_exclude_inactive_and_preserve_order_and_ids(self):
+        all_inverters = list_inverters(self.connection)
+        active_inverters = list_active_inverters(self.connection)
+        all_modules = list_modules(self.connection)
+        active_modules = list_active_modules(self.connection)
+
+        self.assertGreater(len(all_inverters), len(active_inverters))
+        self.assertGreater(len(all_modules), len(active_modules))
+        self.assertTrue(all(item.active for item in active_inverters))
+        self.assertTrue(all(item.active for item in active_modules))
+        self.assertTrue(any(not item.active for item in all_inverters))
+        self.assertTrue(any(not item.active for item in all_modules))
+        self.assertEqual(
+            {item.database_id for item in active_inverters},
+            {item.database_id for item in all_inverters if item.active},
+        )
+        self.assertEqual(
+            {item.database_id for item in active_modules},
+            {item.database_id for item in all_modules if item.active},
+        )
+        for equipment in (all_inverters, all_modules):
+            self.assertEqual(
+                list(equipment),
+                sorted(
+                    equipment,
+                    key=lambda item: (
+                        item.manufacturer.casefold(),
+                        item.model.casefold(),
+                        item.database_id,
+                    ),
+                ),
+            )
+            self.assertTrue(all(item.database_id for item in equipment))
+
+    def test_compatibility_engine_with_real_medium_inverter(self):
+        inverter = load_inverter(self.connection, 214)
+        module = load_module(self.connection, 397)
+        normal, ignored = compare_operating_current_modes(inverter, module)
+
+        self.assertEqual(inverter.model, "SIW500H ST015 M2")
+        self.assertEqual(module.model, "ODA610-33V-MHDRz")
+        self.assertEqual(normal.quantity, 37)
+        self.assertEqual(normal.limiting_factor, LimitingFactor.OVERLOAD_LIMIT)
+        self.assertEqual(ignored.quantity, 37)
+
+    def test_compatibility_engine_expands_different_real_mppt_groups(self):
+        inverter = load_inverter(self.connection, 203)
+        module = load_module(self.connection, 117)
+        normal, ignored = compare_operating_current_modes(inverter, module)
+
+        self.assertEqual(len(normal.mppt_results), 6)
+        self.assertGreater(ignored.quantity, normal.quantity)
+        self.assertEqual(normal.limiting_factor, LimitingFactor.OPERATING_CURRENT)
+
+    def test_real_zero_quantity_reports_operating_current_cause(self):
+        inverter_row = self.connection.execute(
+            "SELECT ID FROM inverter WHERE MODEL = ?", ("SIW200G M050 W1",)
+        ).fetchone()
+        module_row = self.connection.execute(
+            "SELECT ID FROM module WHERE MODEL = ?", ("JAM66D42-570/MB",)
+        ).fetchone()
+        inverter = load_inverter(self.connection, inverter_row["ID"])
+        module = load_module(self.connection, module_row["ID"])
+        normal, ignored = compare_operating_current_modes(inverter, module)
+
+        self.assertEqual(normal.quantity, 0)
+        self.assertEqual(normal.limiting_factor, LimitingFactor.OPERATING_CURRENT)
+        self.assertEqual(ignored.quantity, 13)
+        self.assertEqual(ignored.limiting_factor, LimitingFactor.OVERLOAD_LIMIT)
+        self.assertAlmostEqual(ignored.dc_power_kw, 7.41)
+        self.assertAlmostEqual(ignored.overload_percent, 48.20)
 
 
 if __name__ == "__main__":
