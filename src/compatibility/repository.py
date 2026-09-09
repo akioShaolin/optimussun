@@ -7,18 +7,18 @@ from optimus_lib import mppt_index_dec
 from .models import EquipmentSummary, InverterData, ModuleData, MPPTData
 
 
-def _list_active(connection, table):
+def _list_equipment(connection, table, active_only):
     connection.row_factory = sqlite3.Row
     power_column = "RATED_ACTIVE_POWER" if table == "inverter" else "WP"
     overload_column = "equipment.OVERLOAD" if table == "inverter" else "NULL"
     rows = connection.execute(
         f"SELECT equipment.ID, manufacturer.NAME AS MANUFACTURER, equipment.MODEL, "
         f"equipment.{power_column} AS NOMINAL_POWER, "
-        f"{overload_column} AS OVERLOAD_PERCENT "
+        f"{overload_column} AS OVERLOAD_PERCENT, equipment.ACTIVE "
         f"FROM {table} AS equipment "
         "JOIN manufacturer ON manufacturer.ID = equipment.MANUFACTURER_ID "
-        "WHERE equipment.ACTIVE = 1 "
-        "ORDER BY manufacturer.NAME COLLATE NOCASE, equipment.MODEL COLLATE NOCASE, equipment.ID"
+        + ("WHERE equipment.ACTIVE = 1 " if active_only else "")
+        + "ORDER BY manufacturer.NAME COLLATE NOCASE, equipment.MODEL COLLATE NOCASE, equipment.ID"
     ).fetchall()
     return tuple(
         EquipmentSummary(
@@ -27,17 +27,28 @@ def _list_active(connection, table):
             row["MODEL"],
             row["NOMINAL_POWER"],
             row["OVERLOAD_PERCENT"],
+            bool(row["ACTIVE"]),
         )
         for row in rows
     )
 
 
 def list_active_inverters(connection):
-    return _list_active(connection, "inverter")
+    return _list_equipment(connection, "inverter", active_only=True)
 
 
 def list_active_modules(connection):
-    return _list_active(connection, "module")
+    return _list_equipment(connection, "module", active_only=True)
+
+
+def list_inverters(connection):
+    """Lista todos os inversores, inclusive os inativos."""
+    return _list_equipment(connection, "inverter", active_only=False)
+
+
+def list_modules(connection):
+    """Lista todos os módulos, inclusive os inativos."""
+    return _list_equipment(connection, "module", active_only=False)
 
 
 def _mppt_count(index, tracker_count):

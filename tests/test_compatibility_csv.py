@@ -6,7 +6,9 @@ from unittest.mock import patch
 
 
 SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+TOOLS_DIR = Path(__file__).resolve().parents[1] / "tools"
 sys.path.insert(0, str(SRC_DIR))
+sys.path.insert(0, str(TOOLS_DIR))
 
 from compatibility import (  # noqa: E402
     CSVFormatError,
@@ -19,6 +21,7 @@ from compatibility import (  # noqa: E402
     export_matrix_csv,
     import_matrix_csv,
 )
+from compatibility_matrix_gui import matrix_values  # noqa: E402
 
 
 def result(quantity, power, overload, factor=LimitingFactor.OVERLOAD_LIMIT):
@@ -35,8 +38,8 @@ def result(quantity, power, overload, factor=LimitingFactor.OVERLOAD_LIMIT):
 class CompatibilityCSVTests(unittest.TestCase):
     def setUp(self):
         self.inverter = EquipmentSummary(10, "WEG", "INV A", 5000, 50)
-        self.module_a = EquipmentSummary(20, "FAB", "MÓDULO Á", 570)
-        self.module_b = EquipmentSummary(21, "FAB", "MÓDULO B", 610)
+        self.module_a = EquipmentSummary(20, "FAB", "TSM-715NEG21C.20 (Bifacial)", 715)
+        self.module_b = EquipmentSummary(21, "FAB", "JAM66D42-570/MB", 570)
 
     def calculation(self):
         matrix = CompatibilityMatrix()
@@ -56,7 +59,7 @@ class CompatibilityCSVTests(unittest.TestCase):
                 result(9, 5.49, -8.0), result(9, 5.49, -8.0)
             ),
             (second.key, module_a.key): MatrixCellResult(
-                result(11, 6.27, 25.4), result(11, 6.27, 25.4)
+                result(0, 0, -100), result(0, 0, -100)
             ),
         }
         return MatrixCalculation(matrix.sorted_inverters(), tuple(matrix.modules), cells)
@@ -68,8 +71,18 @@ class CompatibilityCSVTests(unittest.TestCase):
             self.assertEqual(path.read_bytes()[:3], b"\xef\xbb\xbf")
             text = path.read_text(encoding="utf-8-sig")
             self.assertIn(";", text)
+            lines = text.splitlines()
+            self.assertEqual(len(lines), 3)
+            self.assertEqual(
+                lines[0],
+                "Inversor;Qtd. JAM66D42-570/MB;Potência (kW) JAM66D42-570/MB;"
+                "Sobrecarga JAM66D42-570/MB;Qtd. TSM-715NEG21C.20 (Bifacial);"
+                "Potência (kW) TSM-715NEG21C.20 (Bifacial);"
+                "Sobrecarga TSM-715NEG21C.20 (Bifacial)",
+            )
             self.assertIn("12;7,32;101,25%", text)
             self.assertIn("9;5,49;-8%", text)
+            self.assertIn("Não suporta;0;-", text)
             imported = import_matrix_csv(
                 path, [self.inverter], [self.module_a, self.module_b]
             )
@@ -81,7 +94,7 @@ class CompatibilityCSVTests(unittest.TestCase):
         self.assertTrue(all(not item.associated for item in imported.matrix.inverters))
         self.assertEqual(
             [item.display_model for item in imported.matrix.modules],
-            ["MÓDULO B", "MÓDULO Á"],
+            ["JAM66D42-570/MB", "TSM-715NEG21C.20 (Bifacial)"],
         )
         first = imported.calculation.inverters[0]
         first_module = imported.calculation.modules[0]
@@ -89,12 +102,29 @@ class CompatibilityCSVTests(unittest.TestCase):
         self.assertEqual((value.quantity, value.dc_power_kw, value.overload_percent), (12, 7.32, 101.25))
         missing = imported.calculation.cell(first.key, imported.calculation.modules[1].key)
         self.assertFalse(missing.display_result.valid)
+        unsupported = imported.calculation.cell(
+            imported.calculation.inverters[1].key,
+            imported.calculation.modules[1].key,
+        ).display_result
+        self.assertTrue(unsupported.valid)
+        self.assertEqual((unsupported.quantity, unsupported.dc_power_kw), (0, 0.0))
+        self.assertIsNone(unsupported.overload_percent)
+
+    def test_matrix_distinguishes_unsupported_gain_and_missing_data(self):
+        unsupported = MatrixCellResult(result(0, 0, -100), result(0, 0, -100))
+        gain = MatrixCellResult(result(0, 0, -100), result(15, 9.53, 90.5))
+        missing = MatrixCellResult(
+            result(0, 0, -100, LimitingFactor.MISSING_DATA),
+            result(0, 0, -100, LimitingFactor.MISSING_DATA),
+        )
+        self.assertEqual(matrix_values(unsupported), ("Não suporta", "0", "-"))
+        self.assertEqual(matrix_values(gain), ("0 → 15 ↗", "9,53", "90,50%"))
+        self.assertEqual(matrix_values(missing), ("N/D", "N/D", "N/D"))
 
     def test_exact_models_associate_but_personalized_text_does_not(self):
         content = (
-            "Inversor;MÓDULO B;MÓDULO B;MÓDULO B\n"
-            ";610;610;610\n"
-            "Inversor;Quantidade de módulos;Potência (kW);Sobrecarga (%)\n"
+            "Inversor;Qtd. JAM66D42-570/MB;Potência (kW) JAM66D42-570/MB;"
+            "Sobrecarga JAM66D42-570/MB\n"
             "INV A;10;6,1;22%\n"
             "INV A PERSONALIZADO;11;6.71;34,2%\n"
         )
@@ -108,9 +138,8 @@ class CompatibilityCSVTests(unittest.TestCase):
 
     def test_external_edit_is_loaded_without_recalculation(self):
         content = (
-            "Inversor;MÓDULO B;MÓDULO B;MÓDULO B\n"
-            ";610;610;610\n"
-            "Inversor;Quantidade de módulos;Potência (kW);Sobrecarga (%)\n"
+            "Inversor;Qtd. JAM66D42-570/MB;Potência (kW) JAM66D42-570/MB;"
+            "Sobrecarga JAM66D42-570/MB\n"
             "INV A;77;46,97;839,4%\n"
         )
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder:
@@ -125,9 +154,8 @@ class CompatibilityCSVTests(unittest.TestCase):
 
     def test_unknown_module_is_preserved_for_manual_association(self):
         content = (
-            "Inversor;MODELO EXTERNO;MODELO EXTERNO;MODELO EXTERNO\n"
-            ";700;700;700\n"
-            "Inversor;Quantidade de módulos;Potência (kW);Sobrecarga (%)\n"
+            "Inversor;Qtd. MODELO EXTERNO;Potência (kW) MODELO EXTERNO;"
+            "Sobrecarga MODELO EXTERNO\n"
             "INV A;4;2,8;-44%\n"
         )
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder:
@@ -148,9 +176,8 @@ class CompatibilityCSVTests(unittest.TestCase):
     ):
         compare.return_value = (result(18, 10.98, 119.6), result(18, 10.98, 119.6))
         content = (
-            "Inversor;MÓDULO B;MÓDULO B;MÓDULO B\n"
-            ";610;610;610\n"
-            "Inversor;Quantidade de módulos;Potência (kW);Sobrecarga (%)\n"
+            "Inversor;Qtd. JAM66D42-570/MB;Potência (kW) JAM66D42-570/MB;"
+            "Sobrecarga JAM66D42-570/MB\n"
             "INV A;17;10,37;107,4%\n"
         )
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder:
@@ -175,9 +202,10 @@ class CompatibilityCSVTests(unittest.TestCase):
 
     def test_invalid_structure_and_non_finite_values_are_rejected(self):
         invalid_documents = (
-            "Inversor;X;X\n;;\nInversor;Quantidade;Potência\nA;1;2\n",
-            "Inversor;X;X;X\n;500;500;500\nInversor;Quantidade de módulos;Potência (kW);Sobrecarga (%)\nA;1;NaN;0%\n",
-            "Inversor;X;X;X\n;-500;-500;-500\nInversor;Quantidade de módulos;Potência (kW);Sobrecarga (%)\nA;1;0,5;0%\n",
+            "Inversor;Qtd. X;Potência (kW) X\nA;1;2\n",
+            "Inversor;Qtd. X;Potência (kW) X;Sobrecarga Y\nA;1;0,5;0%\n",
+            "Inversor;Qtd. X;Potência (kW) X;Sobrecarga X\nA;1;NaN;0%\n",
+            "Inversor;Qtd. X;Potência (kW) X;Sobrecarga X\nA;Não suporta;1;-\n",
         )
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder:
             for index, content in enumerate(invalid_documents):

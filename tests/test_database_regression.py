@@ -19,6 +19,10 @@ from optimus_lib import (  # noqa: E402
 from compatibility import (  # noqa: E402
     LimitingFactor,
     compare_operating_current_modes,
+    list_active_inverters,
+    list_active_modules,
+    list_inverters,
+    list_modules,
     load_inverter,
     load_module,
 )
@@ -68,6 +72,40 @@ class RealDatabaseRegressionTests(unittest.TestCase):
                 ),
             )
             self.assertGreater(voc_max, 0)
+
+    def test_active_selector_lists_exclude_inactive_and_preserve_order_and_ids(self):
+        all_inverters = list_inverters(self.connection)
+        active_inverters = list_active_inverters(self.connection)
+        all_modules = list_modules(self.connection)
+        active_modules = list_active_modules(self.connection)
+
+        self.assertGreater(len(all_inverters), len(active_inverters))
+        self.assertGreater(len(all_modules), len(active_modules))
+        self.assertTrue(all(item.active for item in active_inverters))
+        self.assertTrue(all(item.active for item in active_modules))
+        self.assertTrue(any(not item.active for item in all_inverters))
+        self.assertTrue(any(not item.active for item in all_modules))
+        self.assertEqual(
+            {item.database_id for item in active_inverters},
+            {item.database_id for item in all_inverters if item.active},
+        )
+        self.assertEqual(
+            {item.database_id for item in active_modules},
+            {item.database_id for item in all_modules if item.active},
+        )
+        for equipment in (all_inverters, all_modules):
+            self.assertEqual(
+                list(equipment),
+                sorted(
+                    equipment,
+                    key=lambda item: (
+                        item.manufacturer.casefold(),
+                        item.model.casefold(),
+                        item.database_id,
+                    ),
+                ),
+            )
+            self.assertTrue(all(item.database_id for item in equipment))
 
     def test_compatibility_engine_with_real_medium_inverter(self):
         inverter = load_inverter(self.connection, 214)

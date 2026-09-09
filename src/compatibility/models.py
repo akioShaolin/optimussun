@@ -25,6 +25,7 @@ class EquipmentSummary:
     model: str
     nominal_power_w: Optional[float] = None
     overload_percent: Optional[float] = None
+    active: bool = True
 
 
 @dataclass(frozen=True)

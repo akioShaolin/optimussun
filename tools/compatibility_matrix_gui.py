@@ -28,6 +28,21 @@ from compatibility import (  # noqa: E402
 )
 
 
+COLORS = {
+    "background": "#F4F7FA",
+    "surface": "#FFFFFF",
+    "surface_alt": "#E8EEF5",
+    "primary": "#1F4E78",
+    "text": "#17212B",
+    "muted": "#5D6B78",
+    "border": "#CBD5E1",
+    "success": "#2E7D32",
+    "warning": "#D97706",
+    "error": "#C62828",
+    "ignored": "#8A94A3",
+}
+
+
 FACTOR_LABELS = {
     LimitingFactor.OVERLOAD_LIMIT: "Limite de sobrecarga",
     LimitingFactor.OPERATING_CURRENT: "Corrente de operação",
@@ -47,7 +62,12 @@ def open_database():
 
 
 def equipment_label(equipment):
-    return f"{equipment.manufacturer} — {equipment.model} [ID {equipment.database_id}]"
+    return f"{equipment.manufacturer} — {equipment.model}"
+
+
+def selected_equipment(combobox, equipment):
+    index = combobox.current()
+    return equipment[index] if 0 <= index < len(equipment) else None
 
 
 def decimal_pt(value, places=2):
@@ -63,6 +83,8 @@ def matrix_values(cell):
     )
     if invalid:
         return "N/D", "N/D", "N/D"
+    if result.quantity == 0:
+        return "Não suporta", "0", "-"
     if cell.uses_ignored_result:
         quantity = f"{cell.normal.quantity} → {cell.ignored.quantity} ↗"
     else:
@@ -112,13 +134,19 @@ def overload_label(selection):
     if not selection.associated:
         return "Pendente de associação"
     registered = selection.equipment.overload_percent
-    return f"Cadastrada ({decimal_pt(registered)}%)"
+    return (
+        f"Cadastrada ({decimal_pt(registered)}%)"
+        if registered is not None
+        else "Cadastrada (N/D)"
+    )
 
 
 def imported_details(cell):
     value = cell.imported_value
     if not value.valid:
         values = "Quantidade: N/D\nPotência DC: N/D\nSobrecarga: N/D"
+    elif value.quantity == 0:
+        values = "Quantidade: Não suporta\nPotência DC: 0 kW\nSobrecarga: —"
     else:
         values = (
             f"Quantidade: {value.quantity}\n"
@@ -145,6 +173,8 @@ class OverloadDialog(tk.Toplevel):
             if selection.custom_overload_percent is not None
             else selection.equipment.overload_percent
         )
+        if initial is None:
+            initial = 0
         self.percent = tk.StringVar(value=decimal_pt(initial))
 
         body = ttk.Frame(self, padding=14)
@@ -157,7 +187,11 @@ class OverloadDialog(tk.Toplevel):
         )
         ttk.Radiobutton(
             body,
-            text=f"Usar cadastrada: {decimal_pt(selection.equipment.overload_percent)}%",
+            text=(
+                f"Usar cadastrada: {decimal_pt(selection.equipment.overload_percent)}%"
+                if selection.equipment.overload_percent is not None
+                else "Usar cadastrada: N/D"
+            ),
             variable=self.mode,
             value="registered",
             command=self._update_state,
@@ -214,6 +248,8 @@ class CompatibilityMatrixGUI(tk.Tk):
         self.title("Optimus Sun — matriz de compatibilidade (provisória)")
         self.geometry("1380x820")
         self.minsize(960, 640)
+        self.configure(background=COLORS["background"])
+        self._configure_styles()
         self.state_model = CompatibilityMatrix()
         self.calculation = None
         self.calculating = False
@@ -222,16 +258,34 @@ class CompatibilityMatrixGUI(tk.Tk):
         with open_database() as connection:
             self.available_inverters = list_active_inverters(connection)
             self.available_modules = list_active_modules(connection)
-        self.inverter_lookup = {
-            equipment_label(item): item for item in self.available_inverters
-        }
-        self.module_lookup = {
-            equipment_label(item): item for item in self.available_modules
-        }
 
         self.status_text = tk.StringVar(value="Monte a seleção e clique em Calcular matriz.")
         self._build_interface()
         self._update_action_states()
+
+    def _configure_styles(self):
+        style = ttk.Style(self)
+        if "vista" in style.theme_names():
+            style.theme_use("vista")
+        style.configure(".", font=("Segoe UI", 9), foreground=COLORS["text"])
+        style.configure("TFrame", background=COLORS["background"])
+        style.configure("TLabelframe", background=COLORS["surface"], padding=8)
+        style.configure(
+            "TLabelframe.Label",
+            background=COLORS["surface"],
+            foreground=COLORS["primary"],
+            font=("Segoe UI", 10, "bold"),
+        )
+        style.configure("TButton", padding=(9, 5), font=("Segoe UI", 9))
+        style.configure("TCombobox", padding=3, font=("Segoe UI", 9))
+        style.configure(
+            "Treeview", rowheight=24, font=("Segoe UI", 9), background=COLORS["surface"]
+        )
+        style.configure(
+            "Treeview.Heading",
+            font=("Segoe UI", 9, "bold"),
+            foreground=COLORS["primary"],
+        )
 
     def _build_interface(self):
         controls = ttk.Frame(self, padding=(10, 10, 10, 4))
@@ -249,7 +303,10 @@ class CompatibilityMatrixGUI(tk.Tk):
         frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
         frame.columnconfigure(0, weight=1)
         self.inverter_combo = ttk.Combobox(
-            frame, state="readonly", values=tuple(self.inverter_lookup)
+            frame,
+            state="readonly",
+            width=48,
+            values=tuple(equipment_label(item) for item in self.available_inverters),
         )
         self.inverter_combo.grid(row=0, column=0, sticky="ew", padx=(0, 6))
         if self.inverter_combo["values"]:
@@ -295,7 +352,10 @@ class CompatibilityMatrixGUI(tk.Tk):
         frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
         frame.columnconfigure(0, weight=1)
         self.module_combo = ttk.Combobox(
-            frame, state="readonly", values=tuple(self.module_lookup)
+            frame,
+            state="readonly",
+            width=48,
+            values=tuple(equipment_label(item) for item in self.available_modules),
         )
         self.module_combo.grid(row=0, column=0, sticky="ew", padx=(0, 6))
         if self.module_combo["values"]:
@@ -360,14 +420,18 @@ class CompatibilityMatrixGUI(tk.Tk):
         outer.pack(fill="both", expand=True, padx=10, pady=(4, 10))
         outer.rowconfigure(0, weight=1)
         outer.columnconfigure(0, weight=1)
-        self.matrix_canvas = tk.Canvas(outer, highlightthickness=0, background="#f5f7fa")
+        self.matrix_canvas = tk.Canvas(
+            outer, highlightthickness=0, background=COLORS["background"]
+        )
         x_scroll = ttk.Scrollbar(outer, orient="horizontal", command=self.matrix_canvas.xview)
         y_scroll = ttk.Scrollbar(outer, orient="vertical", command=self.matrix_canvas.yview)
         self.matrix_canvas.configure(xscrollcommand=x_scroll.set, yscrollcommand=y_scroll.set)
         self.matrix_canvas.grid(row=0, column=0, sticky="nsew")
         y_scroll.grid(row=0, column=1, sticky="ns")
         x_scroll.grid(row=1, column=0, sticky="ew")
-        self.matrix_frame = tk.Frame(self.matrix_canvas, background="#f5f7fa")
+        self.matrix_frame = tk.Frame(
+            self.matrix_canvas, background=COLORS["background"]
+        )
         self.matrix_window = self.matrix_canvas.create_window(
             (0, 0), window=self.matrix_frame, anchor="nw"
         )
@@ -394,7 +458,7 @@ class CompatibilityMatrixGUI(tk.Tk):
     def add_inverter(self):
         if not self._guard_busy():
             return
-        equipment = self.inverter_lookup.get(self.inverter_combo.get())
+        equipment = selected_equipment(self.inverter_combo, self.available_inverters)
         if equipment is None:
             return
         item = self.state_model.add_inverter(equipment)
@@ -478,7 +542,7 @@ class CompatibilityMatrixGUI(tk.Tk):
     def add_module(self):
         if not self._guard_busy():
             return
-        equipment = self.module_lookup.get(self.module_combo.get())
+        equipment = selected_equipment(self.module_combo, self.available_modules)
         if equipment is None:
             return
         item = self.state_model.add_module(equipment)
@@ -516,7 +580,7 @@ class CompatibilityMatrixGUI(tk.Tk):
         if not self._guard_busy():
             return
         key = self._selected_key(self.inverter_tree)
-        equipment = self.inverter_lookup.get(self.inverter_combo.get())
+        equipment = selected_equipment(self.inverter_combo, self.available_inverters)
         if key is None or equipment is None:
             return
         self.state_model.associate_inverter(key, equipment)
@@ -528,7 +592,7 @@ class CompatibilityMatrixGUI(tk.Tk):
         if not self._guard_busy():
             return
         key = self._selected_key(self.module_tree)
-        equipment = self.module_lookup.get(self.module_combo.get())
+        equipment = selected_equipment(self.module_combo, self.available_modules)
         if key is None or equipment is None:
             return
         self.state_model.associate_module(key, equipment)
@@ -705,34 +769,48 @@ class CompatibilityMatrixGUI(tk.Tk):
             widget.destroy()
 
     def _header_label(self, text, row, column, columnspan=1, **options):
+        rowspan = options.pop("rowspan", 1)
         label = tk.Label(
             self.matrix_frame,
             text=text,
-            background=options.pop("background", "#dce6f1"),
-            foreground="#163a5f",
+            background=options.pop("background", COLORS["surface_alt"]),
+            foreground=COLORS["primary"],
             font=options.pop("font", ("Segoe UI", 9, "bold")),
             relief="solid",
-            borderwidth=1,
-            padx=6,
-            pady=4,
+            highlightbackground=COLORS["border"],
+            borderwidth=0,
+            highlightthickness=1,
+            padx=8,
+            pady=6,
             **options,
         )
-        label.grid(row=row, column=column, columnspan=columnspan, sticky="nsew")
+        label.grid(
+            row=row,
+            column=column,
+            columnspan=columnspan,
+            rowspan=rowspan,
+            sticky="nsew",
+        )
         return label
 
     def _render_matrix(self):
         self._clear_matrix()
         calculation = self.calculation
-        self._header_label("Inversor", 0, 0, 1, font=("Segoe UI", 10, "bold"))
-        self._header_label("Texto exibido", 1, 0)
-        self._header_label("Fabricante / modelo real", 2, 0)
+        self._header_label(
+            "Modelo", 0, 0, 1, rowspan=3, font=("Segoe UI", 10, "bold")
+        )
         for module_position, module in enumerate(calculation.modules):
             column = 1 + module_position * 3
             equipment = module.equipment
             self._header_label(module.display_model, 0, column, 3)
             self._header_label(
                 f"{equipment.manufacturer + ' — ' if equipment else 'Não associado — '}"
-                f"potência nominal: {module.nominal_power_w:.0f} W",
+                "potência nominal: "
+                + (
+                    f"{module.nominal_power_w:.0f} W"
+                    if module.nominal_power_w is not None
+                    else "N/D"
+                ),
                 1,
                 column,
                 3,
@@ -742,14 +820,8 @@ class CompatibilityMatrixGUI(tk.Tk):
                 self._header_label(title, 2, column + offset)
 
         for row_position, inverter in enumerate(calculation.inverters, start=3):
-            equipment = inverter.equipment
             self._body_label(
-                f"{inverter.display_label}\n"
-                + (
-                    f"{equipment.manufacturer} — {equipment.model}"
-                    if equipment
-                    else "Não associado"
-                ),
+                inverter.display_label,
                 row_position,
                 0,
                 width=34,
@@ -778,11 +850,15 @@ class CompatibilityMatrixGUI(tk.Tk):
         label = tk.Label(
             self.matrix_frame,
             text=text,
-            background="#ffffff" if row % 2 else "#f2f6fa",
-            relief="solid",
-            borderwidth=1,
-            padx=6,
-            pady=6,
+            background=COLORS["surface"] if row % 2 else COLORS["background"],
+            foreground=COLORS["text"],
+            font=("Segoe UI", 9),
+            relief="flat",
+            borderwidth=0,
+            highlightbackground=COLORS["border"],
+            highlightthickness=1,
+            padx=8,
+            pady=7,
             **options,
         )
         label.grid(row=row, column=column, sticky="nsew")

@@ -56,6 +56,54 @@ Assim, resultados abaixo da potência nominal são negativos. O motor preserva o
 
 Campos obrigatórios com `None`, `-1`, zero ou valores inválidos não são transformados silenciosamente em compatibilidade zero. Nesses casos, o resultado possui `valid = False` e fator `MISSING_DATA`. Faixas de Full Load ausentes são tratadas como opcionais, preservando o comportamento atual do aplicativo.
 
+Na matriz, uma quantidade zero válida é apresentada como `Não suporta | 0 | -`.
+Já um resultado `MISSING_DATA` permanece `N/D | N/D | N/D`. Essa diferença é
+somente visual: quantidade, validade, fator limitante e resultados técnicos
+continuam estruturados e numéricos internamente.
+
+## Política de flexibilização dos limites
+
+A corrente máxima de operação é a única barreira que possui comparação
+automática flexibilizada. O motor calcula o modo normal e o modo que ignora essa
+corrente; somente quando o segundo produz uma quantidade válida maior ele passa
+a ser o `display_result`.
+
+Mesmo nesse modo continuam obrigatórios:
+
+- corrente máxima de curto-circuito;
+- quantidade física de entradas;
+- faixa de tensão MPPT/operação;
+- tensão máxima absoluta de entrada, com Voc corrigido por temperatura;
+- Full Load e demais restrições configuradas;
+- sobrecarga definida para cada ocorrência do inversor.
+
+Não existe fallback para ignorar tensão MPPT, Voc máximo ou Isc máximo, nem
+exceção automática por fabricante ou modelo.
+
+Na matriz, uma quantidade zero válida é apresentada como `Não suporta | 0 | -`.
+Já um resultado `MISSING_DATA` permanece `N/D | N/D | N/D`. Essa diferença é
+somente visual: quantidade, validade, fator limitante e resultados técnicos
+continuam estruturados e numéricos internamente.
+
+## Política de flexibilização dos limites
+
+A corrente máxima de operação é a única barreira que possui comparação
+automática flexibilizada. O motor calcula o modo normal e o modo que ignora essa
+corrente; somente quando o segundo produz uma quantidade válida maior ele passa
+a ser o `display_result`.
+
+Mesmo nesse modo continuam obrigatórios:
+
+- corrente máxima de curto-circuito;
+- quantidade física de entradas;
+- faixa de tensão MPPT/operação;
+- tensão máxima absoluta de entrada, com Voc corrigido por temperatura;
+- Full Load e demais restrições configuradas;
+- sobrecarga definida para cada ocorrência do inversor.
+
+Não existe fallback para ignorar tensão MPPT, Voc máximo ou Isc máximo, nem
+exceção automática por fabricante ou modelo.
+
 ## Estado da implementação
 
 As três primeiras etapas entregam o motor, uma interface provisória de validação e intercâmbio CSV. A matriz permite:
@@ -69,6 +117,15 @@ As três primeiras etapas entregam o motor, uma interface provisória de valida�
 - importar valores preservando linhas, colunas, ordem, repetições e `N/D`;
 - associar manualmente equipamentos que não tiveram correspondência textual exata;
 - recalcular valores importados somente por ação explícita do usuário.
+
+As listas disponíveis na matriz contêm somente equipamentos ativos e são
+ordenadas por fabricante e modelo. Se os dados elétricos de um cadastro ativo não
+forem suficientes, o motor mantém o resultado inválido apresentado como `N/D`.
+
+A primeira coluna da tabela mostra exclusivamente o texto da ocorrência. Esse
+texto começa com o modelo e pode ser personalizado independentemente, inclusive
+em repetições do mesmo ID. Fabricante e modelo real não são repetidos nessa
+célula, mas permanecem disponíveis na estrutura interna e na tela de detalhes.
 
 Quando ignorar a corrente de operação aumenta a quantidade e produz um resultado válido, a matriz usa esse resultado como `display_result`. Quantidade, potência e sobrecarga são sempre apresentadas a partir do mesmo objeto, com `↗` indicando o modo alternativo. Os resultados `normal` e `ignored` continuam preservados integralmente nos detalhes. Se não houver ganho ou se o resultado ignorando corrente for inválido, o resultado normal permanece como principal.
 

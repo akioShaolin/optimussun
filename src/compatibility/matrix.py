@@ -35,7 +35,7 @@ class ModuleSelection:
     key: int
     equipment: EquipmentSummary | None
     display_model: str
-    nominal_power_w: float
+    nominal_power_w: float | None
 
     @property
     def associated(self):
@@ -180,10 +180,10 @@ class CompatibilityMatrix:
 
     def add_imported_module(self, display_model, nominal_power_w, equipment=None):
         model = display_model.strip()
-        power = float(nominal_power_w)
+        power = None if nominal_power_w is None else float(nominal_power_w)
         if not model:
             raise ValueError("O modelo exibido do módulo não pode ficar vazio.")
-        if not math.isfinite(power) or power <= 0:
+        if power is not None and (not math.isfinite(power) or power <= 0):
             raise ValueError("A potência nominal do módulo deve ser positiva.")
         selection = ModuleSelection(
             self._key(), equipment, model, power

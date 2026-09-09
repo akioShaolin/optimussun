@@ -37,6 +37,8 @@ def _display_values(cell):
         invalid = result.limiting_factor == LimitingFactor.MISSING_DATA
     if invalid:
         return "N/D", "N/D", "N/D"
+    if result.quantity == 0:
+        return "Não suporta", "0", "-"
     return (
         str(result.quantity),
         _format_number(result.dc_power_kw),
@@ -49,19 +51,16 @@ def export_matrix_csv(calculation, path):
     target = Path(path)
     with target.open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.writer(stream, delimiter=";", lineterminator="\n")
-        header_models = ["Inversor"]
-        header_power = [""]
-        header_fields = ["Inversor"]
+        header = ["Inversor"]
         for module in calculation.modules:
-            header_models.extend([module.display_model] * 3)
-            power = _format_number(module.nominal_power_w)
-            header_power.extend([power] * 3)
-            header_fields.extend(
-                ["Quantidade de módulos", "Potência (kW)", "Sobrecarga (%)"]
+            header.extend(
+                (
+                    f"Qtd. {module.display_model}",
+                    f"Potência (kW) {module.display_model}",
+                    f"Sobrecarga {module.display_model}",
+                )
             )
-        writer.writerow(header_models)
-        writer.writerow(header_power)
-        writer.writerow(header_fields)
+        writer.writerow(header)
         for inverter in calculation.inverters:
             row = [inverter.display_label]
             for module in calculation.modules:
@@ -130,8 +129,8 @@ def _exact_map(equipment):
 def import_matrix_csv(path, active_inverters=(), active_modules=()):
     """Carrega valores sem executar o motor e associa modelos por igualdade exata."""
     rows = _read_rows(path)
-    if len(rows) < 4:
-        raise CSVFormatError("O arquivo deve possuir três cabeçalhos e ao menos uma linha.")
+    if len(rows) < 2:
+        raise CSVFormatError("O arquivo deve possuir um cabeçalho e ao menos uma linha.")
     width = len(rows[0])
     if width < 4 or (width - 1) % 3:
         raise CSVFormatError("As colunas após Inversor devem formar grupos de três.")
@@ -142,45 +141,35 @@ def import_matrix_csv(path, active_inverters=(), active_modules=()):
             )
     if rows[0][0].strip().casefold() != "inversor":
         raise CSVFormatError("Linha 1, coluna 1 deve conter 'Inversor'.")
-    if rows[2][0].strip().casefold() != "inversor":
-        raise CSVFormatError("Linha 3, coluna 1 deve conter 'Inversor'.")
-    expected = ("quantidade de módulos", "potência (kw)", "sobrecarga (%)")
     inverter_map = _exact_map(active_inverters)
     module_map = _exact_map(active_modules)
     matrix = CompatibilityMatrix()
     module_selections = []
     for start in range(1, width, 3):
-        models = [rows[0][start + offset].strip() for offset in range(3)]
-        if not models[0] or len(set(models)) != 1:
+        prefixes = ("Qtd. ", "Potência (kW) ", "Sobrecarga ")
+        models = []
+        for offset, prefix in enumerate(prefixes):
+            heading = rows[0][start + offset].strip()
+            if not heading.startswith(prefix) or not heading[len(prefix):].strip():
+                raise CSVFormatError(
+                    f"Linha 1, coluna {start + offset + 1}: esperado "
+                    f"'{prefix}<MODELO>'."
+                )
+            models.append(heading[len(prefix):].strip())
+        if len(set(models)) != 1:
             raise CSVFormatError(
                 f"Cabeçalho do módulo nas colunas {start + 1}–{start + 3} é inconsistente."
             )
-        powers = [
-            _number(rows[1][start + offset], 2, start + offset + 1)
-            for offset in range(3)
-        ]
-        if any(abs(value - powers[0]) > 1e-9 for value in powers[1:]):
-            raise CSVFormatError(
-                f"Potência do módulo {models[0]!r} não se repete nas três colunas."
-            )
-        if powers[0] <= 0:
-            raise CSVFormatError(
-                f"Potência do módulo {models[0]!r} deve ser positiva."
-            )
-        fields = tuple(rows[2][start + offset].strip().casefold() for offset in range(3))
-        if fields != expected:
-            raise CSVFormatError(
-                f"Cabeçalhos inválidos para o módulo {models[0]!r}."
-            )
+        equipment = module_map.get(models[0])
         module_selections.append(
             matrix.add_imported_module(
-                models[0], powers[0], module_map.get(models[0])
+                models[0], equipment.nominal_power_w if equipment else None, equipment
             )
         )
 
     cells = {}
     inverter_selections = []
-    for line_number, row in enumerate(rows[3:], 4):
+    for line_number, row in enumerate(rows[1:], 2):
         label = row[0].strip()
         if not label:
             raise CSVFormatError(f"Linha {line_number}: texto do inversor vazio.")
@@ -191,6 +180,17 @@ def import_matrix_csv(path, active_inverters=(), active_modules=()):
             values = [row[start + offset].strip() for offset in range(3)]
             if all(value.casefold() == "n/d" for value in values):
                 imported = ImportedCellValue(None, None, None, False)
+            elif values[0].casefold() == "não suporta":
+                try:
+                    zero_power = _number(values[1], line_number, start + 2) == 0
+                except CSVFormatError:
+                    zero_power = False
+                if not zero_power or values[2] not in {"-", "—"}:
+                    raise CSVFormatError(
+                        f"Linha {line_number}, módulo {module.display_model!r}: "
+                        "'Não suporta' deve ser acompanhado por potência 0 e sobrecarga -."
+                    )
+                imported = ImportedCellValue(0, 0.0, None, True)
             elif any(value.casefold() == "n/d" for value in values):
                 raise CSVFormatError(
                     f"Linha {line_number}, módulo {module.display_model!r}: "

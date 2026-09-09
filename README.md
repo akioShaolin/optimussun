@@ -161,10 +161,19 @@ A matriz provisória pode ser executada, a partir da raiz do projeto, com:
 py -3 -X utf8 -B tools\compatibility_matrix_gui.py
 ```
 
+Os seletores da matriz apresentam somente inversores e módulos ativos,
+ordenados por fabricante e modelo. A ativação dos cadastros pode ser administrada
+em `cadastros_db_gui.py`. A associação interna usa o ID real do banco; o texto do
+combobox é apenas descritivo. Na primeira coluna da matriz aparece somente o
+texto da ocorrência — por padrão, o modelo, ou o rótulo personalizado definido
+pelo usuário. Fabricante e modelo real continuam preservados para cálculo, CSV,
+associação e detalhes.
+
 Na própria janela, use **Exportar CSV** após calcular ou importar uma matriz. O
 arquivo é gravado em UTF-8 com BOM, separado por ponto e vírgula e com números
 em formato decimal brasileiro. Cada módulo ocupa três colunas: quantidade,
-potência em kW e sobrecarga. A exportação usa exatamente o resultado exibido na
+potência em kW e sobrecarga, identificadas pelo modelo em uma única linha de
+cabeçalho. A exportação usa exatamente o resultado exibido na
 matriz (`display_result`) e preserva rótulos repetidos/personalizados e a ordem
 manual dos módulos.
 
@@ -174,6 +183,11 @@ associados automaticamente; os demais ficam marcados como não associados e
 podem ser vinculados manualmente pelos botões **Associar**. Somente
 **Recalcular matriz** substitui os valores importados por novos cálculos. Consulte
 o [formato CSV da matriz](docs/CSV_MATRIZ.md) para a estrutura e as limitações.
+
+Na matriz, `Não suporta | 0 | -` significa que o cálculo foi possível, mas não
+encontrou configuração válida. `N/D | N/D | N/D` indica dados insuficientes. A
+corrente máxima de operação é a única restrição com comparação flexibilizada;
+faixa MPPT, Voc máximo corrigido e Isc máximo permanecem limites obrigatórios.
 
 ## Tecnologias utilizadas
 

@@ -24,6 +24,8 @@ from .matrix import (
 from .repository import (
     list_active_inverters,
     list_active_modules,
+    list_inverters,
+    list_modules,
     load_inverter,
     load_module,
 )
@@ -48,6 +50,8 @@ __all__ = [
     "ModuleSelection",
     "list_active_inverters",
     "list_active_modules",
+    "list_inverters",
+    "list_modules",
     "load_inverter",
     "load_module",
     "CSVFormatError",
