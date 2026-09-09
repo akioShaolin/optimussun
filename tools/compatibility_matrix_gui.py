@@ -12,7 +12,15 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
-DB_PATH = SRC_DIR / "optimus_sun.db"
+
+
+def external_path(filename):
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / filename
+    return SRC_DIR / filename
+
+
+DB_PATH = external_path("optimus_sun.db")
 sys.path.insert(0, str(SRC_DIR))
 
 from compatibility import (  # noqa: E402

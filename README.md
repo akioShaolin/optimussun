@@ -2,11 +2,17 @@
 
 O **Optimus Sun** é um projeto independente desenvolvido por **Pedro Akio Sakuma** para auxiliar no dimensionamento de sistemas fotovoltaicos. A aplicação relaciona modelos de inversores e módulos solares, verifica sua compatibilidade elétrica e operacional e apresenta limites de operação para apoiar a análise do arranjo.
 
-**Versão atual: v2.3.8**
+**Versão atual: v2.5.0**
 
-A `v2.3.7` marcou a primeira release pública formal do Optimus Sun distribuída com Git tags e GitHub Releases. Ela não foi a primeira versão do software; versões anteriores permanecem preservadas no histórico do Git.
+A `v2.5.0` introduz a **Matriz de Compatibilidade**, mantida separada da interface principal. O novo motor em `src/compatibility/` analisa de forma estruturada combinações inversor × módulo, com múltiplos equipamentos, inversores repetidos e rótulos personalizados, sobrecarga individual por ocorrência, fatores limitantes e comparação entre o modo normal e o modo que ignora corrente de operação. Quando essa flexibilização aumenta a quantidade, o resultado é identificado por `↗`.
+
+A matriz também distingue `Não suporta` de `N/D`, oferece detalhes por combinação e permite importar e exportar CSV. Valores importados são preservados sem recálculo automático; equipamentos podem ser associados manualmente e os resultados somente são substituídos mediante recálculo explícito. A implementação conta com 47 testes automatizados.
 
 A `v2.3.8` é uma release de estabilidade e interface, com correções nos cálculos de limites, melhorias no gerenciamento do banco de dados e das janelas auxiliares, testes automatizados e aprimoramentos visuais e de responsividade.
+
+A `v2.3.7` marcou a transição do Optimus Sun para uma identidade independente e para o fluxo atual de versionamento e distribuição por Git tags e GitHub Releases.
+
+A `v2.2.6` foi uma release oficial de estabilização da versão, organização do repositório, ajustes internos, melhorias de manutenção e atualização do banco de dados.
 
 ## Funcionalidades
 
@@ -17,6 +23,11 @@ A `v2.3.8` é uma release de estabilidade e interface, com correções nos cálc
 - Exibição de limites de tensão, corrente, potência e condições de operação.
 - Visualizações e gráficos interativos gerados com Matplotlib.
 - Resumo das capacidades e restrições do arranjo analisado.
+- Matriz de compatibilidade inversor × módulo com múltiplos equipamentos.
+- Repetição de inversores com rótulos e sobrecarga independentes por ocorrência.
+- Comparação entre modo normal e modo ignorando corrente de operação, com indicador `↗` quando há ganho.
+- Fatores limitantes estruturados e detalhes técnicos por combinação.
+- Importação e exportação CSV com associação manual e recálculo explícito.
 
 ## Operação rápida
 
@@ -113,6 +124,7 @@ optimussun/
 ├── src/
 │   ├── compatibility/
 │   │   ├── __init__.py
+│   │   ├── csv_io.py
 │   │   ├── engine.py
 │   │   ├── matrix.py
 │   │   ├── models.py
@@ -139,8 +151,8 @@ optimussun/
 
 - `src/optimus_sun.py`: aplicação principal e interface de dimensionamento.
 - `src/optimus_lib.py`: funções auxiliares de validação e cálculo.
-- `src/compatibility/`: modelos, carregamento SQLite e motor reutilizável de compatibilidade em desenvolvimento para a futura v2.5.0.
-- `tools/compatibility_matrix_gui.py`: interface provisória para montar e inspecionar matrizes de compatibilidade.
+- `src/compatibility/`: modelos, carregamento SQLite, matriz, CSV e motor reutilizável de compatibilidade da v2.5.0.
+- `tools/compatibility_matrix_gui.py`: interface independente para montar e inspecionar matrizes de compatibilidade.
 - `src/compatibility/csv_io.py`: importação e exportação da representação visível da matriz em CSV.
 - `src/cadastros_db_gui.py`: interface administrativa do banco de dados.
 - `src/optimus_sun.db`: banco-base SQLite versionado e usado na execução pelo código-fonte.
@@ -151,11 +163,11 @@ optimussun/
 
 ## Arquitetura básica
 
-A interface principal em Tkinter coleta a seleção do inversor e do módulo, consulta seus parâmetros no banco SQLite e utiliza as funções de `optimus_lib.py` para apoiar as validações e os cálculos. Os resultados são organizados na própria interface, com gráficos produzidos pelo Matplotlib. O aplicativo de cadastros atua separadamente sobre o mesmo banco.
+A v2.5.0 possui duas frentes. A interface principal tradicional em `src/optimus_sun.py` coleta a seleção do inversor e do módulo, consulta seus parâmetros no banco SQLite e utiliza as funções de `optimus_lib.py` para apoiar as validações e os cálculos. Os resultados são organizados na própria interface, com gráficos produzidos pelo Matplotlib. O aplicativo de cadastros atua separadamente sobre o mesmo banco.
 
-Na branch de desenvolvimento da futura v2.5.0, `src/compatibility/` fornece um motor independente da GUI. Ele recebe dados estruturados do inversor, módulo, MPPTs e opções da análise, enumera configurações fisicamente possíveis e devolve um resultado estruturado. Essa funcionalidade ainda não altera a versão publicada v2.3.8 nem está integrada ao layout principal. Consulte a [documentação do motor de compatibilidade](docs/MOTOR_DE_COMPATIBILIDADE.md).
+Em paralelo, `src/compatibility/` fornece o motor estruturado usado pela Matriz de Compatibilidade independente em `tools/compatibility_matrix_gui.py`. Ele recebe dados do inversor, módulo, MPPTs e opções da análise, enumera configurações fisicamente possíveis e devolve resultados estruturados. A matriz faz parte da v2.5.0, mas ainda não está integrada à janela principal. Consulte a [documentação do motor de compatibilidade](docs/MOTOR_DE_COMPATIBILIDADE.md).
 
-A matriz provisória pode ser executada, a partir da raiz do projeto, com:
+A matriz pode ser executada separadamente, a partir da raiz do projeto, com:
 
 ```powershell
 py -3 -X utf8 -B tools\compatibility_matrix_gui.py
@@ -173,7 +185,8 @@ Na própria janela, use **Exportar CSV** após calcular ou importar uma matriz. 
 arquivo é gravado em UTF-8 com BOM, separado por ponto e vírgula e com números
 em formato decimal brasileiro. Cada módulo ocupa três colunas: quantidade,
 potência em kW e sobrecarga, identificadas pelo modelo em uma única linha de
-cabeçalho. A exportação usa exatamente o resultado exibido na
+cabeçalho: `Qtd. <MODELO>`, `Potência (kW) <MODELO>` e
+`Sobrecarga <MODELO>`. A exportação usa exatamente o resultado exibido na
 matriz (`display_result`) e preserva rótulos repetidos/personalizados e a ordem
 manual dos módulos.
 
@@ -205,7 +218,12 @@ O Optimus Sun é uma ferramenta de apoio ao dimensionamento. Seus resultados dev
 
 ## Histórico de versões
 
-Versões antigas foram historicamente mantidas em diretórios próprios. A partir da v2.3.7, a branch `main` representa o estado atual do projeto, enquanto as versões públicas passam a ser identificadas por Git tags e distribuídas por GitHub Releases. O histórico anterior continua disponível nos commits do repositório.
+- **v2.5.0** — introdução do motor e da Matriz de Compatibilidade, CSV e análise estruturada inversor × módulo.
+- **v2.3.8** — release de estabilidade, correções de cálculo, banco de dados e melhorias de interface.
+- **v2.3.7** — transição para a identidade independente e para o fluxo atual de versionamento e distribuição por Git tags e GitHub Releases.
+- **v2.2.6** — estabilização da versão, organização do repositório, ajustes internos, melhorias de manutenção e atualização do banco de dados.
+
+O histórico anterior continua disponível nos commits do repositório.
 
 ## Licença
 

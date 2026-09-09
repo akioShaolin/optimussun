@@ -23,6 +23,7 @@ htmlcov/
 build/
 dist/
 *.spec
+!optimus_sun_v2_5_0.spec
 *.exe
 
 # Bancos de dados locais
