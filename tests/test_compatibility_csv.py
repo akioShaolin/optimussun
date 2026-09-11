@@ -21,7 +21,12 @@ from compatibility import (  # noqa: E402
     export_matrix_csv,
     import_matrix_csv,
 )
-from compatibility_matrix_gui import matrix_values  # noqa: E402
+from compatibility_matrix_gui import (  # noqa: E402
+    matrix_values,
+    overload_percent_label,
+    overload_percent_from_ratio,
+    overload_ratio,
+)
 
 
 def result(quantity, power, overload, factor=LimitingFactor.OVERLOAD_LIMIT):
@@ -36,6 +41,13 @@ def result(quantity, power, overload, factor=LimitingFactor.OVERLOAD_LIMIT):
 
 
 class CompatibilityCSVTests(unittest.TestCase):
+    def test_overload_scale_is_converted_once_at_presentation_boundary(self):
+        self.assertEqual(overload_ratio(100), "1,00")
+        self.assertEqual(overload_ratio(120), "1,20")
+        self.assertEqual(overload_ratio(150), "1,50")
+        self.assertEqual(overload_percent_from_ratio(1.5), 150)
+        self.assertEqual(overload_percent_label(50), "50,00%")
+
     def setUp(self):
         self.inverter = EquipmentSummary(10, "WEG", "INV A", 5000, 50)
         self.module_a = EquipmentSummary(20, "FAB", "TSM-715NEG21C.20 (Bifacial)", 715)
@@ -80,11 +92,12 @@ class CompatibilityCSVTests(unittest.TestCase):
                 "Potência (kW) TSM-715NEG21C.20 (Bifacial);"
                 "Sobrecarga TSM-715NEG21C.20 (Bifacial)",
             )
-            self.assertIn("12;7,32;101,25%", text)
-            self.assertIn("9;5,49;-8%", text)
+            self.assertIn("12;7,32;1,01", text)
+            self.assertIn("9;5,49;-0,08", text)
             self.assertIn("Não suporta;0;-", text)
             imported = import_matrix_csv(
-                path, [self.inverter], [self.module_a, self.module_b]
+                path, [self.inverter], [self.module_a, self.module_b],
+                overload_scale="ratio",
             )
 
         self.assertEqual(
@@ -99,7 +112,8 @@ class CompatibilityCSVTests(unittest.TestCase):
         first = imported.calculation.inverters[0]
         first_module = imported.calculation.modules[0]
         value = imported.calculation.cell(first.key, first_module.key).display_result
-        self.assertEqual((value.quantity, value.dc_power_kw, value.overload_percent), (12, 7.32, 101.25))
+        # A exportação é deliberadamente arredondada para duas casas na razão.
+        self.assertEqual((value.quantity, value.dc_power_kw, value.overload_percent), (12, 7.32, 101.0))
         missing = imported.calculation.cell(first.key, imported.calculation.modules[1].key)
         self.assertFalse(missing.display_result.valid)
         unsupported = imported.calculation.cell(
@@ -151,6 +165,42 @@ class CompatibilityCSVTests(unittest.TestCase):
         )
         self.assertEqual(cell.display_result.quantity, 77)
         self.assertEqual(imported.calculation.source, "imported")
+
+    def test_ambiguous_overload_without_percent_requires_explicit_scale(self):
+        content = (
+            "Inversor;Qtd. JAM66D42-570/MB;Potência (kW) JAM66D42-570/MB;"
+            "Sobrecarga JAM66D42-570/MB\nINV A;10;6,1;1,50\n"
+        )
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder:
+            path = Path(folder) / "ambiguo.csv"
+            path.write_text(content, encoding="utf-8")
+            with self.assertRaises(CSVFormatError):
+                import_matrix_csv(path, [self.inverter], [self.module_b])
+            imported = import_matrix_csv(
+                path, [self.inverter], [self.module_b], overload_scale="ratio"
+            )
+            exported = Path(folder) / "reexportado.csv"
+            export_matrix_csv(imported.calculation, exported)
+            self.assertIn(";1,50", exported.read_text(encoding="utf-8-sig"))
+        cell = imported.calculation.cell(
+            imported.matrix.inverters[0].key, imported.matrix.modules[0].key
+        )
+        self.assertEqual(cell.display_result.overload_percent, 150.0)
+
+    def test_intermediate_ratio_header_remains_supported(self):
+        content = (
+            "Inversor;Qtd. JAM66D42-570/MB;Potência (kW) JAM66D42-570/MB;"
+            "Sobrecarga (razão) JAM66D42-570/MB\nINV A;10;6,1;0,50\n"
+        )
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder:
+            path = Path(folder) / "intermediario.csv"
+            path.write_text(content, encoding="utf-8")
+            imported = import_matrix_csv(path, [self.inverter], [self.module_b])
+        cell = imported.calculation.cell(
+            imported.matrix.inverters[0].key, imported.matrix.modules[0].key
+        )
+        self.assertEqual(cell.display_result.overload_percent, 50.0)
+        self.assertEqual(matrix_values(cell), ("10", "6,10", "50,00%"))
 
     def test_unknown_module_is_preserved_for_manual_association(self):
         content = (

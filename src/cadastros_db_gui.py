@@ -12,6 +12,9 @@ import os
 import sys
 from pathlib import Path
 
+from catalog.gui import CatalogApp
+from version import APP_VERSION
+
 COLORS = {
     "background": "#F4F7FA",
     "surface": "#FFFFFF",
@@ -969,7 +972,7 @@ class App(tk.Tk):
     def __init__(self, db_manager):
         super().__init__()
         self.db_manager = db_manager
-        self.title("Gerenciador Completo Optimus Sun DB")
+        self.title(f"Optimus Sun {APP_VERSION} — Cadastros")
         self.configure(background=COLORS["background"])
 
         w_scr = self.winfo_screenwidth()
@@ -1037,7 +1040,10 @@ if __name__ == "__main__":
 
     try:
         db_manager = DatabaseManager(str(DATABASE_PATH))
-        app = App(db_manager)
+        # A interface v2.6 usa o mesmo banco externo, com regras e transações
+        # concentradas na API reutilizável de catalog.
+        from catalog import CatalogRepository
+        app = CatalogApp(CatalogRepository(DATABASE_PATH))
         app.mainloop()
     except FileNotFoundError:
         # O erro já foi mostrado pelo DatabaseManager

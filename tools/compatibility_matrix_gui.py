@@ -1,4 +1,4 @@
-"""Interface provisória da matriz de compatibilidade do Optimus Sun."""
+"""Interface da Matriz de Compatibilidade do Optimus Sun."""
 
 import queue
 import math
@@ -23,6 +23,8 @@ def external_path(filename):
 DB_PATH = external_path("optimus_sun.db")
 sys.path.insert(0, str(SRC_DIR))
 
+from version import APP_VERSION  # noqa: E402
+
 from compatibility import (  # noqa: E402
     CompatibilityMatrix,
     CompatibilityOptions,
@@ -34,6 +36,7 @@ from compatibility import (  # noqa: E402
     list_active_inverters,
     list_active_modules,
 )
+from focus_navigation import prepare_toplevel  # noqa: E402
 
 
 COLORS = {
@@ -82,6 +85,20 @@ def decimal_pt(value, places=2):
     return f"{value:.{places}f}".replace(".", ",")
 
 
+def overload_ratio(percent):
+    """Converte uma única vez o percentual interno para razão de exibição."""
+    return decimal_pt(percent / 100, 2)
+
+
+def overload_percent_from_ratio(ratio):
+    """Converte a entrada visível para a unidade interna do motor."""
+    return ratio * 100
+
+
+def overload_percent_label(percent):
+    return f"{decimal_pt(percent, 2)}%"
+
+
 def matrix_values(cell):
     result = cell.display_result
     invalid = (
@@ -100,17 +117,19 @@ def matrix_values(cell):
     return (
         quantity,
         decimal_pt(result.dc_power_kw),
-        f"{decimal_pt(result.overload_percent)}%",
+        overload_percent_label(result.overload_percent),
     )
 
 
 def result_details(result):
     if result.limiting_factor == LimitingFactor.MISSING_DATA:
         quantity = power = overload = "N/D"
+    elif result.quantity == 0:
+        quantity, power, overload = "Não suporta", "0 kW", "—"
     else:
         quantity = str(result.quantity)
         power = f"{decimal_pt(result.dc_power_kw)} kW"
-        overload = f"{decimal_pt(result.overload_percent)}%"
+        overload = overload_percent_label(result.overload_percent)
     lines = [
         f"Quantidade: {quantity}",
         f"Potência DC: {power}",
@@ -138,12 +157,12 @@ def result_details(result):
 
 def overload_label(selection):
     if selection.overload_mode == "custom":
-        return f"Personalizada ({decimal_pt(selection.custom_overload_percent)}%)"
+        return f"Personalizada ({overload_percent_label(selection.custom_overload_percent)})"
     if not selection.associated:
         return "Pendente de associação"
     registered = selection.equipment.overload_percent
     return (
-        f"Cadastrada ({decimal_pt(registered)}%)"
+        f"Cadastrada ({overload_percent_label(registered)})"
         if registered is not None
         else "Cadastrada (N/D)"
     )
@@ -159,7 +178,7 @@ def imported_details(cell):
         values = (
             f"Quantidade: {value.quantity}\n"
             f"Potência DC: {decimal_pt(value.dc_power_kw)} kW\n"
-            f"Sobrecarga: {decimal_pt(value.overload_percent)}%"
+            f"Sobrecarga: {overload_percent_label(value.overload_percent)}"
         )
     return (
         "Valor importado de CSV.\n\n"
@@ -168,8 +187,32 @@ def imported_details(cell):
     )
 
 
+class OverloadScaleDialog(tk.Toplevel):
+    """Escolha inequívoca para CSV sem unidade no cabeçalho/valor."""
+    def __init__(self, parent):
+        opener = parent.focus_get() or parent
+        super().__init__(parent); self.result = None
+        self.title("Escala da sobrecarga no CSV"); self.transient(parent); self.resizable(False, False)
+        body = ttk.Frame(self, padding=16); body.pack(fill="both", expand=True)
+        ttk.Label(body, text="O arquivo não identifica a escala da sobrecarga.", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        ttk.Label(body, text="Escolha como interpretar os valores numéricos sem %:").pack(anchor="w", pady=(4, 14))
+        first_button = ttk.Button(body, text="Decimal — exemplo: 0,50 = 50%", command=lambda: self._finish("ratio"), width=38)
+        first_button.pack(fill="x", pady=3)
+        ttk.Button(body, text="Percentual — exemplo: 50 = 50%", command=lambda: self._finish("percent"), width=38).pack(fill="x", pady=3)
+        ttk.Button(body, text="Cancelar — não importar", command=self._cancel, width=38).pack(fill="x", pady=(10, 3))
+        self.protocol("WM_DELETE_WINDOW", self._cancel); self.bind("<Escape>", lambda _event: self._cancel())
+        self.grab_set(); prepare_toplevel(self, opener=opener, initial=first_button)
+
+    def _finish(self, scale):
+        self.result = scale; self.destroy()
+
+    def _cancel(self):
+        self.result = None; self.destroy()
+
+
 class OverloadDialog(tk.Toplevel):
     def __init__(self, parent, selection):
+        opener = parent.focus_get() or parent.inverter_tree
         super().__init__(parent)
         self.title("Configurar sobrecarga da ocorrência")
         self.resizable(False, False)
@@ -183,7 +226,7 @@ class OverloadDialog(tk.Toplevel):
         )
         if initial is None:
             initial = 0
-        self.percent = tk.StringVar(value=decimal_pt(initial))
+        self.percent = tk.StringVar(value=decimal_pt(initial, 2))
 
         body = ttk.Frame(self, padding=14)
         body.pack(fill="both", expand=True)
@@ -193,24 +236,26 @@ class OverloadDialog(tk.Toplevel):
         ttk.Label(body, text=f"Texto: {selection.display_label}").grid(
             row=1, column=0, columnspan=3, sticky="w", pady=(2, 12)
         )
-        ttk.Radiobutton(
+        registered_radio = ttk.Radiobutton(
             body,
             text=(
-                f"Usar cadastrada: {decimal_pt(selection.equipment.overload_percent)}%"
+                f"Usar cadastrada: {overload_percent_label(selection.equipment.overload_percent)}"
                 if selection.equipment.overload_percent is not None
                 else "Usar cadastrada: N/D"
             ),
             variable=self.mode,
             value="registered",
             command=self._update_state,
-        ).grid(row=2, column=0, columnspan=3, sticky="w")
-        ttk.Radiobutton(
+        )
+        registered_radio.grid(row=2, column=0, columnspan=3, sticky="w")
+        custom_radio = ttk.Radiobutton(
             body,
             text="Personalizada:",
             variable=self.mode,
             value="custom",
             command=self._update_state,
-        ).grid(row=3, column=0, sticky="w", pady=(8, 0))
+        )
+        custom_radio.grid(row=3, column=0, sticky="w", pady=(8, 0))
         self.entry = ttk.Entry(body, textvariable=self.percent, width=12)
         self.entry.grid(row=3, column=1, padx=5, pady=(8, 0))
         ttk.Label(body, text="%").grid(row=3, column=2, pady=(8, 0))
@@ -227,6 +272,11 @@ class OverloadDialog(tk.Toplevel):
         x = parent.winfo_rootx() + max(0, (parent.winfo_width() - self.winfo_width()) // 2)
         y = parent.winfo_rooty() + max(0, (parent.winfo_height() - self.winfo_height()) // 2)
         self.geometry(f"+{x}+{y}")
+        prepare_toplevel(
+            self,
+            opener=opener,
+            initial=custom_radio if self.mode.get() == "custom" else registered_radio,
+        )
 
     def _update_state(self):
         self.entry.configure(state="normal" if self.mode.get() == "custom" else "disabled")
@@ -253,7 +303,7 @@ class OverloadDialog(tk.Toplevel):
 class CompatibilityMatrixGUI(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Optimus Sun — matriz de compatibilidade (provisória)")
+        self.title(f"Optimus Sun {APP_VERSION} — Matriz de Compatibilidade")
         self.geometry("1380x820")
         self.minsize(960, 640)
         self.configure(background=COLORS["background"])
@@ -261,6 +311,7 @@ class CompatibilityMatrixGUI(tk.Tk):
         self.state_model = CompatibilityMatrix()
         self.calculation = None
         self.calculating = False
+        self._closing = False
         self.worker_queue = queue.Queue()
 
         with open_database() as connection:
@@ -270,6 +321,11 @@ class CompatibilityMatrixGUI(tk.Tk):
         self.status_text = tk.StringVar(value="Monte a seleção e clique em Calcular matriz.")
         self._build_interface()
         self._update_action_states()
+        self.protocol("WM_DELETE_WINDOW", self._close_window)
+
+    def _close_window(self):
+        self._closing = True
+        self.destroy()
 
     def _configure_styles(self):
         style = ttk.Style(self)
@@ -662,7 +718,23 @@ class CompatibilityMatrixGUI(tk.Tk):
             imported = import_matrix_csv(
                 path, self.available_inverters, self.available_modules
             )
-        except (OSError, CSVFormatError) as error:
+        except CSVFormatError as error:
+            if "sobrecarga sem % é ambígua" not in str(error):
+                messagebox.showerror("CSV inválido", str(error), parent=self)
+                return
+            dialog = OverloadScaleDialog(self)
+            self.wait_window(dialog)
+            if dialog.result is None:
+                return
+            try:
+                imported = import_matrix_csv(
+                    path, self.available_inverters, self.available_modules,
+                    overload_scale=dialog.result,
+                )
+            except (OSError, CSVFormatError) as retry_error:
+                messagebox.showerror("CSV inválido", str(retry_error), parent=self)
+                return
+        except OSError as error:
             messagebox.showerror("CSV inválido", str(error), parent=self)
             return
         self.state_model = imported.matrix
@@ -753,23 +825,33 @@ class CompatibilityMatrixGUI(tk.Tk):
             self.worker_queue.put(("error", error))
 
     def _poll_worker(self):
+        if self._closing or not self.winfo_exists():
+            return
         try:
             status, payload = self.worker_queue.get_nowait()
         except queue.Empty:
             self.after(100, self._poll_worker)
             return
-        self.calculating = False
-        self.calculate_button.configure(state="normal")
-        self.progress.stop()
         if status == "error":
+            self.calculating = False
+            self.calculate_button.configure(state="normal")
+            self.progress.stop()
             self.status_text.set("Falha no cálculo.")
             messagebox.showerror("Não foi possível calcular", str(payload))
             return
         self.calculation = payload
-        self._render_matrix()
+        self.status_text.set("Cálculo concluído; montando a matriz…")
+        self._render_matrix(self._finish_calculation)
+
+    def _finish_calculation(self):
+        if self._closing:
+            return
+        self.calculating = False
+        self.calculate_button.configure(state="normal")
+        self.progress.stop()
         self._update_action_states()
         self.status_text.set(
-            f"Matriz pronta: {len(payload.inverters)} × {len(payload.modules)}."
+            f"Matriz pronta: {len(self.calculation.inverters)} × {len(self.calculation.modules)}."
         )
 
     def _clear_matrix(self):
@@ -801,7 +883,7 @@ class CompatibilityMatrixGUI(tk.Tk):
         )
         return label
 
-    def _render_matrix(self):
+    def _render_matrix(self, on_complete=None):
         self._clear_matrix()
         calculation = self.calculation
         self._header_label(
@@ -827,7 +909,7 @@ class CompatibilityMatrixGUI(tk.Tk):
             for offset, title in enumerate(("Qtd.", "Potência (kW)", "Sobrecarga")):
                 self._header_label(title, 2, column + offset)
 
-        for row_position, inverter in enumerate(calculation.inverters, start=3):
+        def render_row(row_position, inverter):
             self._body_label(
                 inverter.display_label,
                 row_position,
@@ -852,7 +934,27 @@ class CompatibilityMatrixGUI(tk.Tk):
                             self._show_details(inv, mod, result)
                         ),
                     )
-        self._update_scroll_region()
+
+        rows = list(enumerate(calculation.inverters, start=3))
+        if on_complete is None:
+            for row_position, inverter in rows:
+                render_row(row_position, inverter)
+            self._update_scroll_region()
+            return
+
+        def render_batch(start=0):
+            if self._closing or not self.winfo_exists():
+                return
+            end = min(start + 8, len(rows))
+            for row_position, inverter in rows[start:end]:
+                render_row(row_position, inverter)
+            self._update_scroll_region()
+            if end < len(rows):
+                self.after(1, render_batch, end)
+            else:
+                on_complete()
+
+        render_batch()
 
     def _body_label(self, text, row, column, **options):
         label = tk.Label(
@@ -873,6 +975,7 @@ class CompatibilityMatrixGUI(tk.Tk):
         return label
 
     def _show_details(self, inverter, module, cell):
+        opener = self.focus_get() or self.matrix_canvas
         window = tk.Toplevel(self)
         window.title(f"Detalhes — {inverter.display_label} × {module.display_model}")
         window.geometry("1000x620")
@@ -891,13 +994,16 @@ class CompatibilityMatrixGUI(tk.Tk):
         content.columnconfigure(0, weight=1, uniform="details")
         content.columnconfigure(1, weight=1, uniform="details")
         content.rowconfigure(0, weight=1)
+        first_text = None
         if isinstance(cell, ImportedCellResult):
             frame = ttk.LabelFrame(content, text="Valor importado", padding=8)
             frame.grid(row=0, column=0, columnspan=2, sticky="nsew")
             text = tk.Text(frame, wrap="word", padx=8, pady=8)
             text.insert("1.0", imported_details(cell))
             text.configure(state="disabled")
+            text.configure(takefocus=True)
             text.pack(fill="both", expand=True)
+            first_text = text
             difference_text = "Diferença de quantidade: disponível após recalcular"
         else:
             for column, title, result in (
@@ -914,7 +1020,10 @@ class CompatibilityMatrixGUI(tk.Tk):
                 text = tk.Text(frame, wrap="word", padx=8, pady=8)
                 text.insert("1.0", result_details(result))
                 text.configure(state="disabled")
+                text.configure(takefocus=True)
                 text.pack(fill="both", expand=True)
+                if first_text is None:
+                    first_text = text
             difference = cell.ignored.quantity - cell.normal.quantity
             difference_text = f"Diferença de quantidade: {difference:+d} módulo(s)"
         ttk.Label(
@@ -922,6 +1031,7 @@ class CompatibilityMatrixGUI(tk.Tk):
             text=difference_text,
             font=("Segoe UI", 11, "bold"),
         ).pack(pady=(0, 12))
+        prepare_toplevel(window, opener=opener, initial=first_text)
 
 
 if __name__ == "__main__":

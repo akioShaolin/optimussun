@@ -1,6 +1,6 @@
 # Motor de compatibilidade
 
-> Funcionalidade em desenvolvimento para a futura v2.5.0. A versão publicada do Optimus Sun permanece v2.3.8.
+> Motor publicado na v2.5.0 e mantido na candidata v2.6.0. A última versão efetivamente publicada permanece v2.5.0 até a conclusão do processo de release.
 
 O pacote `src/compatibility/` calcula a maior configuração eletricamente admissível para uma combinação de inversor e módulo sem depender do Tkinter. Ele foi separado da interface para poder ser reutilizado por uma matriz de compatibilidade, exportação CSV e futuras interfaces.
 
