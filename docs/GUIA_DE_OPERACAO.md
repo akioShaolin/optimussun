@@ -4,18 +4,28 @@ Este guia apresenta o fluxo básico de dimensionamento e explica as informaçõe
 
 ## 1. Selecionar os equipamentos
 
-Na parte superior da tela principal:
+Na parte superior da tela principal existem abas independentes para **Inversores** e **Módulos**:
 
-1. Selecione o **fabricante do inversor**.
-2. Selecione o modelo em **Selecione o inversor**.
-3. Selecione o **fabricante do módulo**.
-4. Selecione o modelo em **Selecione o módulo**.
+1. Pesquise parcialmente por Id, modelo ou fabricante; o filtro de fabricante é opcional.
+2. Combine situação, potência do módulo e **Filtros avançados…** quando necessário.
+3. Selecione uma linha na aba **Inversores** e outra na aba **Módulos**.
+4. Confirme os equipamentos nos cartões destacados, que preservam o Id real mesmo quando existem modelos iguais.
 
-Ao trocar um fabricante, a lista de modelos correspondente é recarregada. Quando os dois modelos estão definidos, o programa consulta o banco de dados e atualiza os resultados automaticamente.
+Cada aba mantém seus filtros durante a sessão. **Aplicar filtros** confirma o rascunho dos filtros avançados; **Cancelar**, Escape ou fechar a janela descarta alterações ainda não aplicadas. Os limites numéricos são inclusivos e campos sem dado não atendem um filtro numérico ativo.
+
+Ao clicar ou digitar na busca, alterar um filtro, abrir os filtros avançados,
+limpar filtros ou ordenar a lista, a escolha confirmada daquela aba é removida.
+O equipamento da outra aba é preservado. Navegar pelas linhas com as setas apenas
+move o destaque: confirme o equipamento clicando na linha desejada ou pressionando
+Enter com foco na lista. Enter na caixa de busca somente atualiza a pesquisa.
+
+Quando uma linha é confirmada e completa uma combinação válida, o cálculo ocorre
+uma única vez e a pesquisa se recolhe para liberar espaço aos resultados. Use as
+abas ou **Expandir pesquisa** para reabri-la; a simples reabertura não recalcula.
 
 ![Seleção dos equipamentos e resultado principal](../screenshots/scrsht_1.png)
 
-Os botões **Detalhes** abrem as fichas técnicas completas dos equipamentos. Essa consulta é útil para confirmar se o cadastro representa corretamente o datasheet que será usado no projeto.
+Os botões **Detalhes do inversor** e **Detalhes do módulo** abrem as fichas técnicas completas dos equipamentos. Essa consulta é útil para confirmar se o cadastro representa corretamente o datasheet que será usado no projeto.
 
 ## 2. Conferir os dados técnicos
 
@@ -39,7 +49,7 @@ O bloco **Potência máxima no inversor** informa:
 
 - **Qtd. máx. de módulos:** limite adotado pelo programa para o inversor completo;
 - **Sobrecarga admitida:** potência CC correspondente e seu percentual em relação à potência de referência do inversor;
-- **Cálculos:** abre o resumo geral e mostra qual condição limitou a quantidade total.
+- **Gráfico e cálculos:** abre o resumo geral e mostra qual condição limitou a quantidade total.
 
 Cada aba representa um MPPT ou um grupo de MPPTs com os mesmos parâmetros. A indicação, por exemplo, **MPPT 1 a 6**, significa que o resultado apresentado se aplica a todos os MPPTs desse intervalo.
 
@@ -81,7 +91,7 @@ Nos gráficos, **vermelho** identifica o valor limitante e **verde** identifica 
 
 ## 5. Consultar o resumo geral do inversor
 
-Clique em **Cálculos** no bloco **Potência máxima no inversor** para abrir o resumo de todo o equipamento.
+Clique em **Gráfico e cálculos** no bloco **Potência máxima no inversor** para abrir o resumo de todo o equipamento.
 
 ![Resumo geral do inversor](../screenshots/scrsht_4.png)
 
@@ -96,7 +106,7 @@ Esse resumo facilita a comparação entre o limite global do inversor e a distri
 
 ## 6. Opções para ignorar critérios
 
-Depois da seleção do inversor, ficam disponíveis duas opções avançadas:
+Depois da seleção do inversor, ficam disponíveis a sobrecarga usada no cálculo e duas opções avançadas. A sobrecarga pode usar o percentual cadastrado ou um percentual personalizado para a sessão; `50` representa acréscimo de 50%, aceita ponto ou vírgula e não altera o banco.
 
 - **Ignorar corrente de operação:** desconsidera o limite de corrente operacional ao determinar o máximo de strings por MPPT;
 - **Ignorar faixa de carga máxima:** desconsidera essa faixa ao determinar os limites de módulos por string e por inversor.
@@ -115,3 +125,15 @@ Antes de aplicar o dimensionamento em um projeto:
 6. considere normas, requisitos da concessionária e orientações dos fabricantes.
 
 O Optimus Sun é uma ferramenta de apoio. O resultado não substitui a análise de um profissional tecnicamente habilitado.
+
+## 8. Navegação por teclado nas janelas auxiliares
+
+Nas janelas de filtros, detalhes, cálculos, cadastros, grupos de MPPT,
+sobrecarga e associação, use **Tab** para avançar e **Shift+Tab** para retornar.
+Campos mínimo/máximo são percorridos nessa ordem; controles desabilitados e
+elementos apenas decorativos são ignorados. Em formulários roláveis, o controle
+focado é trazido para a área visível.
+
+Ao fechar uma janela auxiliar, o foco retorna ao controle que a abriu quando ele
+continua disponível. Enter mantém a função específica do controle focado e não
+substitui as confirmações exigidas para gravação ou exclusão.

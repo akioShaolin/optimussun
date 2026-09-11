@@ -29,6 +29,11 @@ def _format_number(value, max_places=6):
     return text.replace(".", ",") or "0"
 
 
+def _format_overload_ratio(percent):
+    """Formata a razão visível sem alterar o percentual interno do motor."""
+    return f"{percent / 100:.2f}".replace(".", ",")
+
+
 def _display_values(cell):
     result = cell.display_result
     if isinstance(cell, ImportedCellResult):
@@ -42,7 +47,7 @@ def _display_values(cell):
     return (
         str(result.quantity),
         _format_number(result.dc_power_kw),
-        f"{_format_number(result.overload_percent)}%",
+        _format_overload_ratio(result.overload_percent),
     )
 
 
@@ -126,7 +131,7 @@ def _exact_map(equipment):
     return by_model
 
 
-def import_matrix_csv(path, active_inverters=(), active_modules=()):
+def import_matrix_csv(path, active_inverters=(), active_modules=(), overload_scale=None):
     """Carrega valores sem executar o motor e associa modelos por igualdade exata."""
     rows = _read_rows(path)
     if len(rows) < 2:
@@ -146,7 +151,10 @@ def import_matrix_csv(path, active_inverters=(), active_modules=()):
     matrix = CompatibilityMatrix()
     module_selections = []
     for start in range(1, width, 3):
-        prefixes = ("Qtd. ", "Potência (kW) ", "Sobrecarga ")
+        overload_heading = rows[0][start + 2].strip()
+        ratio_header = overload_heading.startswith("Sobrecarga (razão) ")
+        prefixes = ("Qtd. ", "Potência (kW) ",
+                    "Sobrecarga (razão) " if ratio_header else "Sobrecarga ")
         models = []
         for offset, prefix in enumerate(prefixes):
             heading = rows[0][start + offset].strip()
@@ -204,7 +212,22 @@ def import_matrix_csv(path, active_inverters=(), active_modules=()):
                         "quantidade deve ser um inteiro não negativo."
                     )
                 power = _number(values[1], line_number, start + 2)
-                overload = _number(values[2], line_number, start + 3, percent=True)
+                explicit_percent = values[2].strip().endswith("%")
+                overload = _number(values[2], line_number, start + 3, percent=explicit_percent)
+                if ratio_header:
+                    if explicit_percent:
+                        raise CSVFormatError(
+                            f"Linha {line_number}, coluna {start + 3}: cabeçalho de razão não aceita %."
+                        )
+                    overload *= 100
+                elif not explicit_percent:
+                    if overload_scale not in ("ratio", "percent"):
+                        raise CSVFormatError(
+                            f"Linha {line_number}, coluna {start + 3}: sobrecarga sem % é ambígua; "
+                            "informe overload_scale='ratio' ou 'percent'."
+                        )
+                    if overload_scale == "ratio":
+                        overload *= 100
                 if power < 0:
                     raise CSVFormatError(
                         f"Linha {line_number}, módulo {module.display_model!r}: "

@@ -3,15 +3,10 @@
 #                                            .   \_,!,_/   ,
 #                                             `.,'     `.,'
 #                                              /         \
-#                                        ~ -- :           : -- ~ 
-# _____       _   _                       _____          /           _____   _____   _____
-#|  _  |     | | (_)                     /  ___|                    / __  \ |____ | |  _  |
-#| | | |_ __ | |_ _ _ __ ___  _   _ ___  \ `--. _   _ _ __   __   __`' / /'     / / | |_| |
-#| | | | '_ \| __| | '_ ` _ \| | | / __|  `--. \ | | | '_ \  \ \ / /  / /       \ \ |  _  |
-#\ \_/ / |_) | |_| | | | | | | |_| \__ \ /\__/ / |_| | | | |  \ V / ./ /____.___/ / | |_| |
-# \___/| .__/ \__|_|_| |_| |_|\__,_|___/ \____/ \__,_|_| |_|   \_/  \_____(_)____(_) |_____|
-#      | |                                                                                
-#      |_|                                                                                                                                                                 
+#                                        ~ -- :           : -- ~
+#
+#                                             OPTIMUS SUN
+#                                                v2.6.0
 #⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣶⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 #⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⠀⠀⠀⠀⠀⣤⣤⣤⠀⠀⠀⠀⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 #⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⡇⠀⣠⡶⢿⡇⢿⣿⡏⢳⣦⠀⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣾⡛⣆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
@@ -113,6 +108,11 @@ from optimus_lib import (
     validar,
     vv,
 )
+from equipment_search import EquipmentSearchRepository
+from equipment_search_gui import EquipmentSearchPanel, SearchVisibilityController, format_selection_card
+from overload_control import OverloadSession, bind_overload_entry, valid_registered_percent
+from focus_navigation import prepare_toplevel
+from version import APP_VERSION
 
 # Identidade visual centralizada
 COLORS = {
@@ -478,6 +478,8 @@ def carregar_dados(modelo, equipamento):
             mppt_list = [dict(zip(colunas_mppt, linha)) for linha in mppt_data]
 
             inv_selec["MPPT"] = mppt_list
+            overload_session.select_inverter(inv_id, inv_selec.get("OVERLOAD"))
+            sync_overload_controls()
 
         else:
             # Somente atualiza os calculos, caso inversor e módulo não for selecionado
@@ -492,6 +494,12 @@ def carregar_dados(modelo, equipamento):
     
     # Verifica se as variáveis de inversor e módulos estão preenchidas para fazer os calculos
     if mod_selec and inv_selec:
+        try:
+            effective_overload = overload_session.effective_fraction()
+        except ValueError as error:
+            limpar_saidas()
+            overload_effective_text.set(f"Não calculado: {error}")
+            return False
         
 # -------- Calculos dos Módulos --------
 
@@ -680,7 +688,9 @@ def carregar_dados(modelo, equipamento):
 # -------- Calculos do Inversor --------
         calculos_cc["inv"] = {}
         calculos_cc["inv"]["n_tr"] = inv_selec["NUMBER_OF_TRACKERS"]
-        calculos_cc["inv"]["sb"] = inv_selec["OVERLOAD"] / 100      # Calculo em porcentagem
+        # O cadastro e a entrada da GUI estão em percentual de acréscimo; a
+        # função matemática recebe a fração (50% -> 0,5), convertida uma vez.
+        calculos_cc["inv"]["sb"] = effective_overload
         calculos_cc["inv"]["pn"] = inv_selec["RATED_ACTIVE_POWER"]
         calculos_cc["inv"]["n_in"] = inv_selec["NUMBER_OF_INPUTS"]
         calculos_cc["inv"]["n_tr"] = inv_selec["NUMBER_OF_TRACKERS"]
@@ -786,13 +796,20 @@ def carregar_dados(modelo, equipamento):
             calculos_cc["inv"]["p_max_sb_fl"] = -1
             calculos_cc["inv"]["p_max_sb_fl_per"] = -1
                     
+        overload_effective_text.set(
+            f"Valor efetivamente usado no cálculo: {overload_session.effective_percent():g}%"
+        )
         atualizar_saida()
+        return True
+    return False
 ##################################################################################################################################
 
 # Deleta os campos e limpa o campos de saída
 def limpar_saidas():
 
     frame_qtd_mod_inv.pack_forget()
+    if not frame_img.winfo_manager():
+        frame_img.pack(fill="x", padx=30, pady=2)
 
     for widget in notebook.winfo_children():
         widget.destroy() 
@@ -936,7 +953,7 @@ def atualizar_saida():
     p_sob_per = calculos_cc["inv"]["p_max_sb_fl_per"] if vv(calculos_cc["inv"]["p_max_sb_fl_per"]) and not flag_no_fl.get() else calculos_cc["inv"]["p_max_sb_o_per"]
 
     # Atualização dos campos de saída
-    frame_qtd_mod_inv.pack(after=separador1, fill='x', padx=30, pady=5)
+    frame_qtd_mod_inv.pack(before=notebook, fill='x', padx=30, pady=5)
 
     entry_modulos.config(state='normal')
     entry_modulos.delete(0, tk.END)
@@ -986,7 +1003,8 @@ def open_detalhes(me):
 
     # Vincular evento de rolagem para a janela inteira (detalhes_inv)
     detalhes.bind("<MouseWheel>", _on_mousewheel)
-    canvas = tk.Canvas(detalhes)
+    canvas = tk.Canvas(detalhes, takefocus=True)
+    initial_focus = canvas
     scrollbar = ttk.Scrollbar(detalhes, orient="vertical", command=canvas.yview)
     scrollable_frame = tk.Frame(canvas, bg=bg_c, padx=30)
     scrollable_frame.columnconfigure(0, weight=1)
@@ -1085,6 +1103,7 @@ def open_detalhes(me):
                 # Criar um Notebook
                 notebook_mppt = ttk.Notebook(scrollable_frame, style="Detalhes.TNotebook")
                 notebook_mppt.grid(row=linha, column=0, columnspan=2, sticky="nsew", pady=0, padx=0)
+                initial_focus = notebook_mppt
                 linha += 1
 
                 for idx, mppt in enumerate(inv_selec["MPPT"]):
@@ -1188,6 +1207,7 @@ def open_detalhes(me):
 
                 criar_label(scrollable_frame, valor, linha, 1, style="table")
                 linha += 1    
+    prepare_toplevel(detalhes, opener=me, initial=initial_focus, canvas=canvas)
 ##################################################################################################################################
         
 # Abre janela com os gráficos da quantidades de strings a serem ligadas por MPPT e Quantidade máxima de módulos
@@ -1272,6 +1292,7 @@ def open_detalhes_graficos(me, indice_mppt):
         fig1.tight_layout()
         canvas1 = FigureCanvasTkAgg(fig1, master=frame_conteudo)
         canvas1.draw()
+        canvas1.get_tk_widget().configure(takefocus=True)
         canvas1.get_tk_widget().grid(row=0, column=0, sticky="nsew", padx=(4, 6), pady=4)
     except Exception as e:
         messagebox.showerror("Erro ao gerar gráfico", f"Detalhes: {e}")
@@ -1315,9 +1336,15 @@ def open_detalhes_graficos(me, indice_mppt):
         fig2.tight_layout()
         canvas2 = FigureCanvasTkAgg(fig2, master=frame_conteudo)
         canvas2.draw()
+        canvas2.get_tk_widget().configure(takefocus=True)
         canvas2.get_tk_widget().grid(row=0, column=1, sticky="nsew", padx=(6, 4), pady=4)
     except Exception as e:
         messagebox.showerror("Erro ao gerar gráfico", f"Detalhes: {e}")
+    prepare_toplevel(
+        detalhes_graficos,
+        opener=me,
+        initial=canvas1.get_tk_widget() if "canvas1" in locals() else None,
+    )
 ##################################################################################################################################
 
 # Abre uma janela com os gráficos da quantidade de placas suportadas pelo inversor
@@ -1419,6 +1446,7 @@ def open_resumo_geral(me):
     fig.tight_layout(rect=[0, 0, 1, 0.9])
     canvas=FigureCanvasTkAgg(fig, master=frame_grafico)
     canvas.draw()
+    canvas.get_tk_widget().configure(takefocus=True)
     canvas.get_tk_widget().pack(side="left", fill="both", expand=True, padx=10, pady=10)
 
     # Frame com informações por MPPT
@@ -1479,6 +1507,7 @@ def open_resumo_geral(me):
         tk.Label(frame_max, text=format_mppt_display(mppt["mppt_index"]), bg=bg, anchor="center").grid(row=i+2, column=0, sticky="nsew", padx=1)
         tk.Label(frame_max, text=mppt["n_mod_fl_mppt"] if vv(mppt["n_mod_fl_mppt"]) else "Não Informado", bg=bg, anchor="center").grid(row=i+2, column=1, sticky="nsew", padx=1)
         tk.Label(frame_max, text=f"{mppt["p_mod_fl_mppt"]:.1f}" if vv(mppt['p_mod_fl_mppt']) else "Não Informado", bg=bg, anchor="center").grid(row=i+2, column=2, sticky="nsew", padx=1)
+    prepare_toplevel(resumo_geral, opener=me, initial=canvas.get_tk_widget())
 ##################################################################################################################################
 
 # Atualização do aviso de prejuízo na geração
@@ -1565,7 +1594,7 @@ def add_chart_legend(ax, colors):
 
 
 # Exemplo de build a partir de src/; o banco permanece externo ao bundle.
-# pyinstaller --onedir --noconsole --icon=optimus_sun.ico --name "Optimus Sun 2.3.8" --add-data "optimus_sun.png;." --add-data "optimus_sun.ico;." optimus_sun.py
+# O empacotamento oficial dos três aplicativos é definido no arquivo .spec da versão.
 
 # Evento de fechamento da janela
 def on_close_all():
@@ -1606,13 +1635,13 @@ logo_path = resource_path("optimus_sun.png")
 # Criar interface Tkinter
 root = tk.Tk()
 root.iconbitmap(icon_path)
-root.title("Optimus Sun 2.3.8")
+root.title(f"Optimus Sun {APP_VERSION}")
 root.configure(background=bg_c)
 center_window(
     root,
-    820,
-    680,
-    min_width=680,
+    1180,
+    720,
+    min_width=960,
     min_height=600,
     vertical_offset=-50,
     screen_margin=65,
@@ -1643,84 +1672,294 @@ style.configure("TButton", padding=(10, 5), font=(FONT_FAMILY, 10))
 style.configure("TCanvas", background=bg_c)
 style.configure("TScrollbar", background=bg_c)
 style.configure("TCheckbutton", font=(FONT_FAMILY, 10))
+style.configure("Search.TNotebook", tabmargins=(0, 0, 0, 0))
+style.configure("Search.TNotebook.Tab", padding=(18, 9), font=(FONT_FAMILY, 11, "bold"), anchor="center")
+style.map("Search.TNotebook.Tab",
+          background=[("selected", COLORS["primary_soft"]), ("!selected", COLORS["surface_alt"])],
+          foreground=[("selected", COLORS["primary"]), ("!selected", COLORS["text"])])
 
-# Carregar fabricantes antes de criar os widgets
+# Mantém o carregamento legado dos dicionários, sem torná-lo requisito para busca.
 carregar_fabricante()
 
 frame_entrada = tk.Frame(root, bg=bg_c)                # Campos de Entrada
 separador1 = ttk.Separator(root, orient="horizontal")         # Separador
-frame_qtd_mod_inv = tk.Frame(root, bg=bg_c)            # Informações de carga do inversor
-notebook = ttk.Notebook(root)                                 # Campos de Saída
-frame_img = tk.Frame(root, bg=bg_c)                    # Imagem do Optimus Sun
-rodape = ttk.Label(root, text="Optimus Sun 2.3.8 — Pedro Akio Sakuma © 2025–2026", anchor='e', font=("Arial", 8)) # Label fixo no rodapé
+results_shell = tk.Frame(root, bg=bg_c)
+results_canvas = tk.Canvas(results_shell, bg=bg_c, highlightthickness=0)
+results_scrollbar = ttk.Scrollbar(results_shell, orient="vertical", command=results_canvas.yview)
+results_content = tk.Frame(results_canvas, bg=bg_c)
+results_window = results_canvas.create_window((0, 0), window=results_content, anchor="nw")
+results_canvas.configure(yscrollcommand=results_scrollbar.set)
+results_content.bind("<Configure>", lambda _e: results_canvas.configure(scrollregion=results_canvas.bbox("all")))
+results_canvas.bind("<Configure>", lambda event: results_canvas.itemconfigure(results_window, width=event.width))
+results_shell.grid_columnconfigure(0, weight=1); results_shell.grid_rowconfigure(0, weight=1)
+results_canvas.grid(row=0, column=0, sticky="nsew"); results_scrollbar.grid(row=0, column=1, sticky="ns")
 
-frame_entrada.pack(fill="x", padx=24, pady=(12, 6))
+def scroll_results(event):
+    if event.widget.winfo_class() == "Treeview":
+        return
+    x, y = root.winfo_pointerxy()
+    left, top = results_canvas.winfo_rootx(), results_canvas.winfo_rooty()
+    if not (left <= x <= left + results_canvas.winfo_width() and top <= y <= top + results_canvas.winfo_height()):
+        return
+    delta = -1 if getattr(event, "delta", 0) > 0 else 1
+    if getattr(event, "num", None) in (4, 5): delta = -1 if event.num == 4 else 1
+    results_canvas.yview_scroll(delta, "units")
+    return "break"
+
+for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+    root.bind(sequence, scroll_results, add="+")
+results_canvas.bind("<Button-1>", lambda _event: results_canvas.focus_set())
+results_canvas.bind("<Prior>", lambda _event: results_canvas.yview_scroll(-1, "pages"))
+results_canvas.bind("<Next>", lambda _event: results_canvas.yview_scroll(1, "pages"))
+frame_qtd_mod_inv = tk.Frame(results_content, bg=bg_c)            # Informações de carga do inversor
+notebook = ttk.Notebook(results_content)                                 # Campos de Saída
+frame_img = tk.Frame(results_content, bg=bg_c)                    # Imagem do Optimus Sun
+rodape = ttk.Label(root, text=f"Optimus Sun {APP_VERSION} — Pedro Akio Sakuma © 2025–2026", anchor='e', font=("Arial", 8)) # Label fixo no rodapé
+
+frame_entrada.pack(fill="x", padx=16, pady=(8, 4))
 separador1.pack(fill='x', padx=10, pady=5)
 frame_qtd_mod_inv.pack(fill='x', padx=30, pady=5)
-notebook.pack(expand=True, fill='both', padx=10, pady=10)
+notebook.pack(fill='both', padx=10, pady=10)
+results_shell.pack(expand=True, fill='both', padx=(10, 4))
 frame_img.pack(fill='x', padx=30, pady=5)
 rodape.pack(side="bottom", fill='x', pady=(5,3))
 
-frame_entrada.grid_columnconfigure(0, weight=0)
-frame_entrada.grid_columnconfigure(1, weight=1, uniform="seletores")
-frame_entrada.grid_columnconfigure(2, weight=0)
-frame_entrada.grid_columnconfigure(3, weight=1, uniform="seletores")
+frame_entrada.grid_columnconfigure(0, weight=1)
 
 # ----------------------------------- #
 # ---------- frame_entrada ---------- #
-# Selecionar fabricante do Inversor
-criar_label(frame_entrada, "Fabricante do inversor:", 0, 0)   
-fab_inversor_cb = ttk.Combobox(frame_entrada, values = list(fab_inversor.keys()), state = "readonly")
-fab_inversor_cb.grid(row = 0, column = 1, sticky="ew", padx = (5, 18), pady = 5)
-fab_inversor_cb.bind("<<ComboboxSelected>>", lambda e: carregar_modelo(fab_inversor_cb.get(), "inversor"))
+# Variáveis compatíveis com os callbacks de cálculo existentes.
+inversor_cb = tk.StringVar()
+modulo_cb = tk.StringVar()
+selected_inverter_title = tk.StringVar()
+selected_inverter_details = tk.StringVar()
+selected_module_title = tk.StringVar()
+selected_module_details = tk.StringVar()
+selected_inverter_title.set(format_selection_card("inverter", None)[0])
+selected_inverter_details.set(format_selection_card("inverter", None)[1])
+selected_module_title.set(format_selection_card("module", None)[0])
+selected_module_details.set(format_selection_card("module", None)[1])
+overload_session = OverloadSession()
+overload_mode = tk.StringVar(value="registered")
+custom_overload_text = tk.StringVar()
+registered_overload_text = tk.StringVar(value="Cadastrada: nenhum inversor selecionado")
+overload_effective_text = tk.StringVar(value="Valor efetivo: não disponível")
 
-# Selecionar fabricante do Módulo
-criar_label(frame_entrada, "Fabricante do módulo:", 0, 2)
-fab_modulo_cb = ttk.Combobox(frame_entrada, values = list(fab_modulo.keys()), state = "readonly")
-fab_modulo_cb.grid(row=0, column=3, sticky="ew", padx = (5, 0), pady = 5)
-fab_modulo_cb.bind("<<ComboboxSelected>>", lambda e: carregar_modelo(fab_modulo_cb.get(), "modulo"))
 
-# Seleção de inversor por modelo
-criar_label(frame_entrada, "Selecione o inversor:", 1, 0)
-inversor_cb = ttk.Combobox(frame_entrada, state = "readonly")
-inversor_cb.grid(row=1, column=1, sticky="ew", padx=(5, 18), pady=5)
-inversor_cb.bind("<<ComboboxSelected>>", lambda e: carregar_dados(inversor_cb.get(), "inversor"))
+def sync_overload_controls():
+    """Sincroniza widgets sem alterar o cadastro ou disparar cálculo."""
+    has_inverter = bool(inv_selec)
+    overload_mode.set(overload_session.mode)
+    custom_overload_text.set(overload_session.custom_text)
+    registered = overload_session.registered_percent
+    registered_overload_text.set(
+        f"Cadastrada: {registered:g}%" if valid_registered_percent(registered)
+        else "Cadastrada: não informada"
+    )
+    state = "normal" if has_inverter else "disabled"
+    registered_overload_radio.configure(state=state)
+    custom_overload_radio.configure(state=state)
+    custom_overload_entry.configure(state="normal" if has_inverter and overload_session.mode == "custom" else "disabled")
+    try:
+        effective = overload_session.effective_percent()
+        overload_effective_text.set(f"Valor efetivo no próximo cálculo: {effective:g}%")
+    except ValueError as error:
+        overload_effective_text.set(f"Não calculado: {error}" if has_inverter else "Valor efetivo: não disponível")
 
-# Seleção de módulo por modelo
-criar_label(frame_entrada, "Selecione o módulo:", 1, 2)
-modulo_cb = ttk.Combobox(frame_entrada, state = "readonly")
-modulo_cb.grid(row=1, column=3, sticky="ew", padx=(5, 0), pady=5)
-modulo_cb.bind("<<ComboboxSelected>>", lambda e: carregar_dados(modulo_cb.get(), "modulo"))
+
+def select_overload_mode(mode):
+    overload_session.mode = mode
+    overload_session.custom_text = custom_overload_text.get()
+    sync_overload_controls()
+    if mode == "registered" and mod_selec and inv_selec:
+        carregar_dados(inversor_cb.get(), "")
+    elif mode == "custom":
+        close_topLevels()
+        limpar_saidas()
+
+
+def mark_custom_overload_dirty(_event=None):
+    overload_session.custom_text = custom_overload_text.get()
+    overload_effective_text.set("Valor personalizado alterado — pressione Enter para calcular.")
+    close_topLevels()
+    limpar_saidas()
+
+
+def apply_custom_overload(_event=None):
+    overload_session.custom_text = custom_overload_text.get()
+    try:
+        effective = overload_session.effective_percent()
+    except ValueError as error:
+        overload_effective_text.set(f"Não calculado: {error}")
+        return
+    overload_effective_text.set(f"Valor efetivo no próximo cálculo: {effective:g}%")
+    if mod_selec and inv_selec:
+        carregar_dados(inversor_cb.get(), "")
+
+
+def selecionar_resultado_busca(row, equipamento):
+    """Mantém seleção por Id e limpa somente o equipamento que saiu do filtro."""
+    global inversores, modulos, inv_selec, mod_selec
+    if row is None:
+        if equipamento == "inversor":
+            inversores = {}; inversor_cb.set(""); inv_selec = {}
+            selected_inverter_title.set(format_selection_card("inverter", None)[0])
+            selected_inverter_details.set(format_selection_card("inverter", None)[1])
+            overload_session.clear(); sync_overload_controls()
+            flag_no_iop.set(False); flag_no_fl.set(False)
+            chk_iop.config(state="disabled"); chk_fl.config(state="disabled")
+            detalhes_inv_btn.config(state="disabled")
+        else:
+            modulos = {}; modulo_cb.set(""); mod_selec = {}
+            selected_module_title.set(format_selection_card("module", None)[0])
+            selected_module_details.set(format_selection_card("module", None)[1])
+            detalhes_mod_btn.config(state="disabled")
+        limpar_saidas()
+        return
+    label = f"Id {row['ID']} — {row['MANUFACTURER']} — {row['MODEL']}"
+    if equipamento == "inversor":
+        inversores = {label: row["ID"]}; inversor_cb.set(label)
+        title, details = format_selection_card("inverter", row)
+        selected_inverter_title.set(title); selected_inverter_details.set(details)
+        detalhes_inv_btn.config(state="normal")
+    else:
+        modulos = {label: row["ID"]}; modulo_cb.set(label)
+        title, details = format_selection_card("module", row)
+        selected_module_title.set(title); selected_module_details.set(details)
+        detalhes_mod_btn.config(state="normal")
+    calculated = carregar_dados(label, equipamento)
+    search_visibility.after_selection(calculated, bool(inv_selec and mod_selec))
+
+
+search_repository = EquipmentSearchRepository(db_path)
+search_header = ttk.Frame(frame_entrada)
+search_header.grid(row=0, column=0, sticky="ew", columnspan=4, padx=4)
+search_header.columnconfigure(0, weight=1)
+search_hint = ttk.Label(search_header, text="Pesquisa expandida — filtros e listas preservam seu estado.", foreground=COLORS["muted"])
+search_hint.grid(row=0, column=0, sticky="w")
+search_toggle_button = ttk.Button(search_header, text="Recolher pesquisa")
+search_toggle_button.grid(row=0, column=1, sticky="e")
+
+search_notebook = ttk.Notebook(frame_entrada, style="Search.TNotebook")
+search_notebook.grid(row=1, column=0, sticky="nsew", columnspan=4, pady=(3, 0))
+inverter_search = EquipmentSearchPanel(
+    search_notebook, search_repository, "inverter",
+    lambda row: selecionar_resultado_busca(row, "inversor"),
+)
+module_search = EquipmentSearchPanel(
+    search_notebook, search_repository, "module",
+    lambda row: selecionar_resultado_busca(row, "modulo"),
+)
+search_notebook.add(inverter_search, text="Inversores")
+search_notebook.add(module_search, text="Módulos")
+
+
+search_tab_width = None
+
+
+def resize_search_tabs(event):
+    global search_tab_width
+    # O width das abas ttk é expresso em caracteres; o divisor mantém cada uma
+    # próxima de metade da largura útil sem duplicar os painéis existentes.
+    width = max(14, int((event.width - 24) / 15))
+    if width != search_tab_width:
+        search_tab_width = width
+        style.configure("Search.TNotebook.Tab", width=width)
+
+
+search_visibility = SearchVisibilityController(search_notebook, search_toggle_button, search_hint, lambda _expanded: root.update_idletasks())
+search_notebook.bind("<Configure>", resize_search_tabs, add="+")
+
+selection_summary = ttk.LabelFrame(frame_entrada, text="Equipamentos selecionados", padding=(7, 5))
+selection_summary.grid(row=2, column=0, columnspan=4, sticky="ew", padx=4, pady=(6, 1))
+selection_summary.columnconfigure(0, weight=1, uniform="selection"); selection_summary.columnconfigure(1, weight=1, uniform="selection")
+
+inverter_card = tk.Frame(selection_summary, bg="#E8F0F8", highlightbackground="#4F779F", highlightthickness=1)
+inverter_card.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+tk.Frame(inverter_card, bg="#4F779F", width=5).pack(side="left", fill="y")
+inverter_card_body = tk.Frame(inverter_card, bg="#E8F0F8"); inverter_card_body.pack(side="left", fill="both", expand=True, padx=8, pady=5)
+inverter_card_body.columnconfigure(0, weight=1)
+tk.Label(inverter_card_body, textvariable=selected_inverter_title, bg="#E8F0F8", fg=COLORS["text"], font=(FONT_FAMILY, 10, "bold"), anchor="w").grid(row=0, column=0, sticky="ew")
+tk.Label(inverter_card_body, textvariable=selected_inverter_details, bg="#E8F0F8", fg=COLORS["muted"], font=(FONT_FAMILY, 9), anchor="w").grid(row=1, column=0, sticky="ew")
+
+module_card = tk.Frame(selection_summary, bg="#F0EDF7", highlightbackground="#76639A", highlightthickness=1)
+module_card.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+tk.Frame(module_card, bg="#76639A", width=5).pack(side="left", fill="y")
+module_card_body = tk.Frame(module_card, bg="#F0EDF7"); module_card_body.pack(side="left", fill="both", expand=True, padx=8, pady=5)
+module_card_body.columnconfigure(0, weight=1)
+tk.Label(module_card_body, textvariable=selected_module_title, bg="#F0EDF7", fg=COLORS["text"], font=(FONT_FAMILY, 10, "bold"), anchor="w").grid(row=0, column=0, sticky="ew")
+tk.Label(module_card_body, textvariable=selected_module_details, bg="#F0EDF7", fg=COLORS["muted"], font=(FONT_FAMILY, 9), anchor="w").grid(row=1, column=0, sticky="ew")
 
 # Condições de funcionamento do inversor
+calculation_settings = ttk.Frame(frame_entrada)
+calculation_settings.grid(row=3, column=0, columnspan=4, sticky="ew", padx=4, pady=(3, 0))
+calculation_options = ttk.LabelFrame(calculation_settings, text="Opções de cálculo", padding=(7, 4))
+calculation_options.columnconfigure(0, weight=1); calculation_options.columnconfigure(1, weight=1)
+
 # Ignorar corrente de operação
 flag_no_iop = tk.BooleanVar(value=False)
-chk_iop = tk.Checkbutton(frame_entrada, text="Ignorar corrente de operação", variable=flag_no_iop, onvalue=True, offvalue=False, bg=bg_c, state='disabled')
-chk_iop.grid(row=2, column=0, columnspan=2, sticky="nsw")
+chk_iop = tk.Checkbutton(calculation_options, text="  Ignorar corrente de operação", variable=flag_no_iop, onvalue=True, offvalue=False, bg=bg_c, activebackground=bg_c, selectcolor=COLORS["primary_soft"], font=(FONT_FAMILY, 10), anchor="w", padx=5, pady=4, takefocus=True, state='disabled')
+chk_iop.grid(row=0, column=0, sticky="ew", padx=(0, 6))
 chk_iop.config(command=lambda: carregar_dados(inversor_cb.get(), ""))
 
 # Ignorar faixa de carga máxima
 flag_no_fl = tk.BooleanVar(value=False)
-chk_fl = tk.Checkbutton(frame_entrada, text="Ignorar faixa de carga máxima", variable=flag_no_fl, onvalue=True, offvalue=False, bg=bg_c, state='disabled')
-chk_fl.grid(row=3, column=0, columnspan=2, sticky="nsw")
+chk_fl = tk.Checkbutton(calculation_options, text="  Ignorar faixa de carga máxima", variable=flag_no_fl, onvalue=True, offvalue=False, bg=bg_c, activebackground=bg_c, selectcolor=COLORS["primary_soft"], font=(FONT_FAMILY, 10), anchor="w", padx=5, pady=4, takefocus=True, state='disabled')
+chk_fl.grid(row=0, column=1, sticky="ew", padx=(6, 0))
 chk_fl.config(command=lambda: carregar_dados(inversor_cb.get(), ""))
 
 # Botão de detalhes do inversor
-detalhes_inv_btn = ttk.Button(frame_entrada, text="Detalhes", command=lambda: open_detalhes(detalhes_inv_btn))
-detalhes_inv_btn.grid(row=4, column=1, sticky="e", padx=(5, 18), pady=5)
+detalhes_inv_btn = ttk.Button(inverter_card_body, text="Detalhes do inversor", command=lambda: open_detalhes(detalhes_inv_btn), state="disabled")
+detalhes_inv_btn.grid(row=0, column=1, rowspan=2, sticky="e", padx=(8, 0))
 detalhes_inv_btn.eq = "inversor"
 
 # Botão de detalhes do modulo
-detalhes_mod_btn = ttk.Button(frame_entrada, text="Detalhes", command=lambda: open_detalhes(detalhes_mod_btn))
-detalhes_mod_btn.grid(row=4, column=3, sticky="e", padx=(5, 0), pady=5)
+detalhes_mod_btn = ttk.Button(module_card_body, text="Detalhes do módulo", command=lambda: open_detalhes(detalhes_mod_btn), state="disabled")
+detalhes_mod_btn.grid(row=0, column=1, rowspan=2, sticky="e", padx=(8, 0))
 detalhes_mod_btn.eq = "modulo"
+
+overload_frame = ttk.LabelFrame(calculation_settings, text="Sobrecarga usada no cálculo", padding=(7, 4))
+registered_overload_radio = ttk.Radiobutton(overload_frame, text="Usar sobrecarga cadastrada", variable=overload_mode, value="registered", command=lambda: select_overload_mode("registered"), state="disabled")
+registered_overload_radio.grid(row=0, column=0, sticky="w")
+ttk.Label(overload_frame, textvariable=registered_overload_text).grid(row=0, column=1, sticky="w", padx=(5, 18))
+custom_overload_radio = ttk.Radiobutton(overload_frame, text="Personalizar sobrecarga (%)", variable=overload_mode, value="custom", command=lambda: select_overload_mode("custom"), state="disabled")
+custom_overload_radio.grid(row=0, column=2, sticky="w")
+custom_overload_entry = ttk.Entry(overload_frame, textvariable=custom_overload_text, width=10, state="disabled")
+custom_overload_entry.grid(row=0, column=3, sticky="w", padx=5)
+bind_overload_entry(custom_overload_entry, mark_custom_overload_dirty, apply_custom_overload)
+ttk.Label(overload_frame, textvariable=overload_effective_text).grid(row=1, column=0, columnspan=4, sticky="w", pady=(3, 0))
+
+
+calculation_layout_mode = None
+
+
+def layout_calculation_settings(event=None):
+    global calculation_layout_mode
+    width = event.width if event is not None else calculation_settings.winfo_width()
+    mode = "side" if width >= 1180 else "stacked"
+    if mode == calculation_layout_mode:
+        return
+    calculation_layout_mode = mode
+    overload_frame.grid_forget(); calculation_options.grid_forget()
+    if mode == "side":
+        calculation_settings.columnconfigure(0, weight=3); calculation_settings.columnconfigure(1, weight=2)
+        overload_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
+        calculation_options.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
+    else:
+        calculation_settings.columnconfigure(0, weight=1); calculation_settings.columnconfigure(1, weight=0)
+        overload_frame.grid(row=0, column=0, sticky="ew")
+        calculation_options.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+
+
+calculation_settings.bind("<Configure>", layout_calculation_settings, add="+")
+layout_calculation_settings()
 # ---------- frame_entrada ---------- #
 # ----------------------------------- #
 
 # -------- frame_qtd_mod_inv -------- #
 # ----------------------------------- #
 ttk.Label(frame_qtd_mod_inv, text="Potência máxima no inversor", style="h1.TLabel").grid(row=0, column=0, columnspan=2, padx=5, pady=5, sticky='w')
-btn_resumo_geral = ttk.Button(frame_qtd_mod_inv, text="Cálculos", command= lambda: open_resumo_geral(btn_resumo_geral))
+btn_resumo_geral = ttk.Button(frame_qtd_mod_inv, text="Gráfico e cálculos", command=lambda: open_resumo_geral(btn_resumo_geral))
 ttk.Label(frame_qtd_mod_inv, text="Qtd. máx. de módulos:").grid(row=1, column=0, padx=5, pady=5, sticky='w')
 entry_modulos = ttk.Entry(frame_qtd_mod_inv, width=10, state="readonly")
 ttk.Label(frame_qtd_mod_inv, text="Sobrecarga admitida:").grid(row=2, column=0, padx=5, pady=5, sticky='w')
@@ -1745,7 +1984,7 @@ aviso.grid_remove()
 # ------------ frame_img ------------ #
 logo = Image.open(img_path)
 logo_redim = logo.copy()
-logo_redim.thumbnail((175, 175), Image.Resampling.LANCZOS)
+logo_redim.thumbnail((48, 48), Image.Resampling.LANCZOS)
 img = ImageTk.PhotoImage(logo_redim)
 
 label_img = tk.Label(frame_img, image=img, bg=bg_c)
@@ -1758,20 +1997,14 @@ frame_qtd_mod_inv.pack_forget()
 
 root.protocol("WM_DELETE_WINDOW", on_close_all)
 
-print("""
+print(r"""
                                                ;   :   ;
-                                            .   \\_,!,_/   ,
+                                            .   \_,!,_/   ,
                                              `.,'     `.,'
-                                              /         \\
+                                              /         \
                                         ~ -- :           : -- ~ 
- _____       _   _                       _____                      _____   _____   _____
-|  _  |     | | (_)                     /  ___|                    / __  \\ |____ | |  _  |
-| | | |_ __ | |_ _ _ __ ___  _   _ ___  \\ `--. _   _ _ __   __   __`' / /'     / / | |_| |
-| | | | '_ \\| __| | '_ ` _ \\| | | / __|  `--. \\ | | | '_ \\  \\ \\ / /  / /       \\ \\ |  _  |
-\\ \\_/ / |_) | |_| | | | | | | |_| \\__ \\ /\\__/ / |_| | | | |  \\ V / ./ /____.___/ / | |_| |
- \\___/| .__/ \\__|_|_| |_| |_|\\__,_|___/ \\____/ \\__,_|_| |_|   \\_/  \\_____(_)____(_) |_____|
-      | |                                                                                
-      |_|                                                                                                                                                              
+                 OPTIMUS SUN
+                    v2.6.0
 """)
 ##################################################################################################################################
 

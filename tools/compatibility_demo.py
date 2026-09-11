@@ -38,7 +38,7 @@ def format_result(result):
     lines = [
         f"Quantidade total: {result.quantity}",
         f"Potência DC: {result.dc_power_kw:.2f} kW",
-        f"Sobrecarga: {result.overload_percent:.2f}%",
+        f"Sobrecarga: {result.overload_percent:.2f}%".replace(".", ","),
         f"Fator limitante: {result.limiting_factor.value}",
         f"Total de strings: {result.total_strings}",
         "Módulos por string: "
