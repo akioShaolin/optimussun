@@ -6,6 +6,8 @@ import sqlite3
 import sys
 import threading
 import tkinter as tk
+import time
+from contextlib import closing
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
@@ -37,6 +39,7 @@ from compatibility import (  # noqa: E402
     list_active_modules,
 )
 from focus_navigation import prepare_toplevel  # noqa: E402
+from compatibility.matrix import MatrixCalculationCancelled  # noqa: E402
 
 
 COLORS = {
@@ -69,7 +72,7 @@ FACTOR_LABELS = {
 
 
 def open_database():
-    return sqlite3.connect(f"file:{DB_PATH.resolve()}?mode=ro", uri=True)
+    return closing(sqlite3.connect(f"file:{DB_PATH.resolve()}?mode=ro", uri=True))
 
 
 def equipment_label(equipment):
@@ -312,7 +315,14 @@ class CompatibilityMatrixGUI(tk.Tk):
         self.calculation = None
         self.calculating = False
         self._closing = False
-        self.worker_queue = queue.Queue()
+        self.worker_queue = queue.Queue(maxsize=32)
+        self._job_id = 0
+        self._cancel_event = None
+        self._poll_after = None
+        self._paint_after = None
+        self._viewport_generation = 0
+        self._previous_calculation = None
+        self._worker_thread = None
 
         with open_database() as connection:
             self.available_inverters = list_active_inverters(connection)
@@ -325,6 +335,16 @@ class CompatibilityMatrixGUI(tk.Tk):
 
     def _close_window(self):
         self._closing = True
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+        for callback in (self._poll_after, self._paint_after):
+            if callback is not None:
+                try:
+                    self.after_cancel(callback)
+                except tk.TclError:
+                    pass
+        self._poll_after = None
+        self._paint_after = None
         self.destroy()
 
     def _configure_styles(self):
@@ -471,7 +491,9 @@ class CompatibilityMatrixGUI(tk.Tk):
             frame, text="Calcular matriz", command=self.start_calculation
         )
         self.calculate_button.pack(side="left")
-        self.progress = ttk.Progressbar(frame, mode="indeterminate", length=150)
+        self.cancel_button = ttk.Button(frame, text="Cancelar", command=self.cancel_calculation, state="disabled")
+        self.cancel_button.pack(side="left", padx=(6, 0))
+        self.progress = ttk.Progressbar(frame, mode="determinate", maximum=100, length=150)
         self.progress.pack(side="left", padx=10)
         ttk.Label(frame, textvariable=self.status_text).pack(side="left", fill="x")
 
@@ -487,31 +509,23 @@ class CompatibilityMatrixGUI(tk.Tk):
         self.matrix_canvas = tk.Canvas(
             outer, highlightthickness=0, background=COLORS["background"]
         )
-        x_scroll = ttk.Scrollbar(outer, orient="horizontal", command=self.matrix_canvas.xview)
-        y_scroll = ttk.Scrollbar(outer, orient="vertical", command=self.matrix_canvas.yview)
+        x_scroll = ttk.Scrollbar(outer, orient="horizontal", command=self._xview)
+        y_scroll = ttk.Scrollbar(outer, orient="vertical", command=self._yview)
         self.matrix_canvas.configure(xscrollcommand=x_scroll.set, yscrollcommand=y_scroll.set)
         self.matrix_canvas.grid(row=0, column=0, sticky="nsew")
         y_scroll.grid(row=0, column=1, sticky="ns")
         x_scroll.grid(row=1, column=0, sticky="ew")
-        self.matrix_frame = tk.Frame(
-            self.matrix_canvas, background=COLORS["background"]
-        )
-        self.matrix_window = self.matrix_canvas.create_window(
-            (0, 0), window=self.matrix_frame, anchor="nw"
-        )
-        self.matrix_frame.bind("<Configure>", self._update_scroll_region)
-        self.matrix_canvas.bind("<Configure>", self._expand_matrix_view)
-        ttk.Label(
-            self.matrix_frame,
-            text="Adicione inversores e módulos para gerar a matriz.",
-        ).grid(padx=20, pady=20)
+        self.matrix_canvas.bind("<Configure>", lambda _event: self._schedule_paint())
+        self.matrix_canvas.bind("<Button-1>", self._matrix_click)
+        self.matrix_canvas.create_text(20, 20, text="Adicione inversores e módulos para gerar a matriz.", anchor="nw")
 
-    def _update_scroll_region(self, _event=None):
-        self.matrix_canvas.configure(scrollregion=self.matrix_canvas.bbox("all"))
+    def _xview(self, *args):
+        self.matrix_canvas.xview(*args)
+        self._schedule_paint()
 
-    def _expand_matrix_view(self, event):
-        requested = self.matrix_frame.winfo_reqwidth()
-        self.matrix_canvas.itemconfigure(self.matrix_window, width=max(event.width, requested))
+    def _yview(self, *args):
+        self.matrix_canvas.yview(*args)
+        self._schedule_paint()
 
     def _guard_busy(self):
         if self.calculating:
@@ -668,17 +682,14 @@ class CompatibilityMatrixGUI(tk.Tk):
         if preserve_imported and self.calculation and self.calculation.source == "imported":
             try:
                 self.calculation = self.state_model.snapshot_with_cells(self.calculation)
-                self._render_matrix()
-                self.status_text.set("Matriz importada — valores ainda não recalculados.")
+                self._render_matrix(lambda: self.status_text.set("Matriz importada — valores ainda não recalculados."))
                 self._update_action_states()
                 return
             except ValueError:
                 pass
         self.calculation = None
         self._clear_matrix()
-        ttk.Label(
-            self.matrix_frame, text="Seleção alterada. Calcule novamente a matriz."
-        ).grid(padx=20, pady=20)
+        self.matrix_canvas.create_text(20, 20, text="Seleção alterada. Calcule novamente a matriz.", anchor="nw")
         self.status_text.set("Seleção alterada — cálculo necessário.")
         self._update_action_states()
 
@@ -740,14 +751,19 @@ class CompatibilityMatrixGUI(tk.Tk):
         self.state_model = imported.matrix
         self.calculation = imported.calculation
         self._refresh_selection_trees()
-        self._render_matrix()
+        self.status_text.set("Preparando visualização da matriz importada…")
+        self._render_matrix(self._finish_import)
         pending_inverters = sum(not item.associated for item in self.state_model.inverters)
         pending_modules = sum(not item.associated for item in self.state_model.modules)
-        self.status_text.set(
+        self._import_status = (
             "Matriz importada — valores ainda não recalculados. "
             f"Pendências: {pending_inverters} inversor(es), {pending_modules} módulo(s)."
         )
         self._update_action_states()
+
+    def _finish_import(self):
+        self.progress["value"] = 100
+        self.status_text.set(self._import_status)
 
     def export_csv(self):
         if self.calculation is None:
@@ -775,7 +791,8 @@ class CompatibilityMatrixGUI(tk.Tk):
         self.calculate_button.configure(
             text="Recalcular matriz"
             if self.calculation and self.calculation.source == "imported"
-            else "Calcular matriz"
+            else "Calcular matriz",
+            state="disabled" if self.calculating else "normal",
         )
 
     def start_calculation(self):
@@ -805,174 +822,221 @@ class CompatibilityMatrixGUI(tk.Tk):
             messagebox.showerror("Não foi possível calcular", str(error))
             return
         self.calculating = True
+        self._previous_calculation = self.calculation
         self.calculate_button.configure(state="disabled")
-        self.progress.start(12)
+        self.cancel_button.configure(state="normal")
+        self.progress["value"] = 0
         total = len(self.state_model.inverters) * len(self.state_model.modules)
-        self.status_text.set(f"Calculando {total} combinação(ões)…")
-        threading.Thread(
-            target=self._calculate_worker, daemon=True
-        ).start()
-        self.after(100, self._poll_worker)
+        self.status_text.set(f"Preparando dados para {total} combinação(ões)…")
+        self._job_id += 1
+        job_id = self._job_id
+        self._cancel_event = threading.Event()
+        self.worker_queue = queue.Queue(maxsize=32)
+        self._worker_thread = threading.Thread(
+            target=self._calculate_worker, args=(job_id, self.state_model, self._cancel_event), daemon=True
+        )
+        self._worker_thread.start()
+        self._poll_after = self.after(40, self._poll_worker)
 
-    def _calculate_worker(self):
+    def cancel_calculation(self):
+        if not self.calculating or self._cancel_event is None:
+            return
+        self._cancel_event.set()
+        self.cancel_button.configure(state="disabled")
+        self.status_text.set("Cancelando cálculo…")
+        if self._poll_after is None:
+            self._clear_matrix()
+            self.calculation = self._previous_calculation
+            if self.calculation is not None:
+                self._render_matrix()
+            self._finish_cancelled()
+
+    def _calculate_worker(self, job_id, state_model, cancel_event):
         try:
             with open_database() as connection:
-                calculation = self.state_model.calculate(
-                    connection, CompatibilityOptions()
+                calculation = state_model.calculate(
+                    connection, CompatibilityOptions(),
+                    progress=lambda done, total: self._queue_progress(job_id, done, total),
+                    is_cancelled=cancel_event.is_set,
                 )
-            self.worker_queue.put(("ok", calculation))
+            self._queue_terminal(job_id, "cancelled" if cancel_event.is_set() else "ok", calculation)
+        except MatrixCalculationCancelled:
+            self._queue_terminal(job_id, "cancelled", None)
         except Exception as error:
-            self.worker_queue.put(("error", error))
+            self._queue_terminal(job_id, "error", error)
+
+    def _queue_progress(self, job_id, done, total):
+        try:
+            self.worker_queue.put_nowait((job_id, "progress", (done, total)))
+        except queue.Full:
+            pass
+        time.sleep(0.001)  # cede a vez ao event loop; nunca dorme na thread Tk
+
+    def _queue_terminal(self, job_id, status, payload):
+        item = (job_id, status, payload)
+        while True:
+            try:
+                self.worker_queue.put_nowait(item)
+                return
+            except queue.Full:
+                try:
+                    self.worker_queue.get_nowait()  # descarta somente progresso antigo
+                except queue.Empty:
+                    pass
 
     def _poll_worker(self):
+        self._poll_after = None
         if self._closing or not self.winfo_exists():
             return
-        try:
-            status, payload = self.worker_queue.get_nowait()
-        except queue.Empty:
-            self.after(100, self._poll_worker)
-            return
-        if status == "error":
-            self.calculating = False
-            self.calculate_button.configure(state="normal")
-            self.progress.stop()
-            self.status_text.set("Falha no cálculo.")
-            messagebox.showerror("Não foi possível calcular", str(payload))
-            return
-        self.calculation = payload
-        self.status_text.set("Cálculo concluído; montando a matriz…")
-        self._render_matrix(self._finish_calculation)
+        for _ in range(32):
+            try:
+                job_id, status, payload = self.worker_queue.get_nowait()
+            except queue.Empty:
+                break
+            if job_id != self._job_id:
+                continue
+            if status == "progress":
+                if not self._cancel_event.is_set():
+                    done, total = payload
+                    self.progress["value"] = 100 * done / total
+                    self.status_text.set(f"Calculando {done} de {total} combinações…")
+            elif status == "cancelled":
+                self._finish_cancelled()
+                return
+            elif status == "error":
+                self._finish_cancelled("Falha no cálculo.")
+                messagebox.showerror("Não foi possível calcular", str(payload), parent=self)
+                return
+            else:
+                if self._cancel_event.is_set():
+                    self._finish_cancelled()
+                    return
+                self.calculation = payload
+                self.status_text.set("Preparando visualização…")
+                self.progress["value"] = 0
+                self._render_matrix(self._finish_calculation)
+                return
+        self._poll_after = self.after(40, self._poll_worker)
+
+    def _finish_cancelled(self, status="Cálculo cancelado; resultado anterior preservado."):
+        self.calculating = False
+        self._previous_calculation = None
+        self.cancel_button.configure(state="disabled")
+        self.progress["value"] = 0
+        self.status_text.set(status)
+        self._update_action_states()
 
     def _finish_calculation(self):
         if self._closing:
             return
         self.calculating = False
-        self.calculate_button.configure(state="normal")
-        self.progress.stop()
+        self._previous_calculation = None
+        self.cancel_button.configure(state="disabled")
+        self.progress["value"] = 100
         self._update_action_states()
         self.status_text.set(
             f"Matriz pronta: {len(self.calculation.inverters)} × {len(self.calculation.modules)}."
         )
 
     def _clear_matrix(self):
-        for widget in self.matrix_frame.winfo_children():
-            widget.destroy()
-
-    def _header_label(self, text, row, column, columnspan=1, **options):
-        rowspan = options.pop("rowspan", 1)
-        label = tk.Label(
-            self.matrix_frame,
-            text=text,
-            background=options.pop("background", COLORS["surface_alt"]),
-            foreground=COLORS["primary"],
-            font=options.pop("font", ("Segoe UI", 9, "bold")),
-            relief="solid",
-            highlightbackground=COLORS["border"],
-            borderwidth=0,
-            highlightthickness=1,
-            padx=8,
-            pady=6,
-            **options,
-        )
-        label.grid(
-            row=row,
-            column=column,
-            columnspan=columnspan,
-            rowspan=rowspan,
-            sticky="nsew",
-        )
-        return label
+        self._viewport_generation += 1
+        if self._paint_after is not None:
+            self.after_cancel(self._paint_after)
+            self._paint_after = None
+        self.matrix_canvas.delete("all")
+        self.matrix_canvas.configure(scrollregion=(0, 0, 1, 1))
 
     def _render_matrix(self, on_complete=None):
         self._clear_matrix()
         calculation = self.calculation
-        self._header_label(
-            "Modelo", 0, 0, 1, rowspan=3, font=("Segoe UI", 10, "bold")
-        )
-        for module_position, module in enumerate(calculation.modules):
-            column = 1 + module_position * 3
-            equipment = module.equipment
-            self._header_label(module.display_model, 0, column, 3)
-            self._header_label(
-                f"{equipment.manufacturer + ' — ' if equipment else 'Não associado — '}"
-                "potência nominal: "
-                + (
-                    f"{module.nominal_power_w:.0f} W"
-                    if module.nominal_power_w is not None
-                    else "N/D"
-                ),
-                1,
-                column,
-                3,
-                font=("Segoe UI", 8),
-            )
-            for offset, title in enumerate(("Qtd.", "Potência (kW)", "Sobrecarga")):
-                self._header_label(title, 2, column + offset)
-
-        def render_row(row_position, inverter):
-            self._body_label(
-                inverter.display_label,
-                row_position,
-                0,
-                width=34,
-                anchor="w",
-            )
-            for module_position, module in enumerate(calculation.modules):
-                cell = calculation.cell(inverter.key, module.key)
-                values = matrix_values(cell)
-                for offset, value in enumerate(values):
-                    label = self._body_label(
-                        value,
-                        row_position,
-                        1 + module_position * 3 + offset,
-                        width=13,
-                        cursor="hand2",
-                    )
-                    label.bind(
-                        "<Button-1>",
-                        lambda _event, inv=inverter, mod=module, result=cell: (
-                            self._show_details(inv, mod, result)
-                        ),
-                    )
-
-        rows = list(enumerate(calculation.inverters, start=3))
-        if on_complete is None:
-            for row_position, inverter in rows:
-                render_row(row_position, inverter)
-            self._update_scroll_region()
+        if calculation is None:
             return
+        width = 280 + len(calculation.modules) * 360
+        height = 84 + len(calculation.inverters) * 32
+        self.matrix_canvas.configure(scrollregion=(0, 0, width, height))
+        self._schedule_paint(on_complete)
 
-        def render_batch(start=0):
-            if self._closing or not self.winfo_exists():
+    def _schedule_paint(self, on_complete=None):
+        if self._closing or self._paint_after is not None or self.calculation is None:
+            return
+        generation = self._viewport_generation
+
+        def paint():
+            self._paint_after = None
+            if self._closing or generation != self._viewport_generation:
                 return
-            end = min(start + 8, len(rows))
-            for row_position, inverter in rows[start:end]:
-                render_row(row_position, inverter)
-            self._update_scroll_region()
-            if end < len(rows):
-                self.after(1, render_batch, end)
-            else:
+            self._paint_viewport()
+            if on_complete is not None:
                 on_complete()
 
-        render_batch()
+        self._paint_after = self.after_idle(paint)
 
-    def _body_label(self, text, row, column, **options):
-        label = tk.Label(
-            self.matrix_frame,
-            text=text,
-            background=COLORS["surface"] if row % 2 else COLORS["background"],
-            foreground=COLORS["text"],
-            font=("Segoe UI", 9),
-            relief="flat",
-            borderwidth=0,
-            highlightbackground=COLORS["border"],
-            highlightthickness=1,
-            padx=8,
-            pady=7,
-            **options,
+    def _draw_cell(self, x, y, width, height, value, *, header=False, stripe=False, anchor="center"):
+        canvas = self.matrix_canvas
+        canvas.create_rectangle(
+            x, y, x + width, y + height,
+            fill=COLORS["surface_alt"] if header else COLORS["background"] if stripe else COLORS["surface"],
+            outline=COLORS["border"], tags="matrix",
         )
-        label.grid(row=row, column=column, sticky="nsew")
-        return label
+        canvas.create_text(
+            x + (8 if anchor == "w" else width / 2), y + height / 2,
+            text=value, anchor="w" if anchor == "w" else "center",
+            width=width - 12, fill=COLORS["primary"] if header else COLORS["text"],
+            font=("Segoe UI", 9, "bold" if header else "normal"), tags="matrix",
+        )
+
+    def _paint_viewport(self):
+        calculation = self.calculation
+        if calculation is None:
+            return
+        canvas = self.matrix_canvas
+        left = canvas.canvasx(0)
+        top = canvas.canvasy(0)
+        right = left + max(1, canvas.winfo_width())
+        bottom = top + max(1, canvas.winfo_height())
+        first_module = max(0, int((left - 280) // 360))
+        last_module = min(len(calculation.modules), int((right - 280) // 360) + 1)
+        first_row = max(0, int((top - 84) // 32))
+        last_row = min(len(calculation.inverters), int((bottom - 84) // 32) + 1)
+        canvas.delete("matrix")
+        if left < 280 and top < 84:
+            self._draw_cell(0, 0, 280, 84, "Modelo", header=True)
+        if top < 84:
+            for module_position in range(first_module, last_module):
+                module = calculation.modules[module_position]
+                x = 280 + module_position * 360
+                equipment = module.equipment
+                power = f"{module.nominal_power_w:.0f} W" if module.nominal_power_w is not None else "N/D"
+                self._draw_cell(x, 0, 360, 28, module.display_model, header=True)
+                self._draw_cell(x, 28, 360, 28, f"{equipment.manufacturer if equipment else 'Não associado'} — potência nominal: {power}", header=True)
+                for offset, title in enumerate(("Qtd.", "Potência (kW)", "Sobrecarga")):
+                    self._draw_cell(x + offset * 120, 56, 120, 28, title, header=True)
+        for row_position in range(first_row, last_row):
+            inverter = calculation.inverters[row_position]
+            y = 84 + row_position * 32
+            if left < 280:
+                self._draw_cell(0, y, 280, 32, inverter.display_label, stripe=row_position % 2 == 1, anchor="w")
+            for module_position in range(first_module, last_module):
+                module = calculation.modules[module_position]
+                values = matrix_values(calculation.cell(inverter.key, module.key))
+                x = 280 + module_position * 360
+                for offset, value in enumerate(values):
+                    self._draw_cell(x + offset * 120, y, 120, 32, value, stripe=row_position % 2 == 1)
+
+    def _matrix_click(self, event):
+        if self.calculation is None:
+            return
+        x = self.matrix_canvas.canvasx(event.x)
+        y = self.matrix_canvas.canvasy(event.y)
+        if x < 280 or y < 84:
+            return
+        row = int((y - 84) // 32)
+        column = int((x - 280) // 360)
+        if row >= len(self.calculation.inverters) or column >= len(self.calculation.modules):
+            return
+        inverter = self.calculation.inverters[row]
+        module = self.calculation.modules[column]
+        self._show_details(inverter, module, self.calculation.cell(inverter.key, module.key))
 
     def _show_details(self, inverter, module, cell):
         opener = self.focus_get() or self.matrix_canvas

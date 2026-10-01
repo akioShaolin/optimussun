@@ -3,6 +3,31 @@
 import tkinter as tk
 
 
+def schedule_while_alive(widget, delay_ms, callback):
+    """Agenda um callback e cancela seu timer se o widget for destruído."""
+    pending = {"id": None}
+
+    def run():
+        pending["id"] = None
+        try:
+            if widget.winfo_exists():
+                callback()
+        except tk.TclError:
+            pass
+
+    def cancel(event):
+        if event.widget is widget and pending["id"] is not None:
+            try:
+                widget.after_cancel(pending["id"])
+            except tk.TclError:
+                pass
+            pending["id"] = None
+
+    widget.bind("<Destroy>", cancel, add="+")
+    pending["id"] = widget.after_idle(run) if delay_ms is None else widget.after(delay_ms, run)
+    return pending["id"]
+
+
 def _usable(widget):
     try:
         return widget.winfo_exists() and widget.winfo_viewable() and str(widget.cget("state")) != "disabled"
@@ -25,7 +50,7 @@ def focus_first(window, preferred=None):
         if target is not None:
             target.focus_set()
 
-    window.after_idle(apply)
+    schedule_while_alive(window, None, apply)
 
 
 def restore_focus_on_destroy(window, opener):
@@ -38,7 +63,7 @@ def restore_focus_on_destroy(window, opener):
             return
         try:
             owner = opener.winfo_toplevel()
-            owner.after_idle(lambda: opener.focus_set() if _usable(opener) else None)
+            schedule_while_alive(owner, None, lambda: opener.focus_set() if _usable(opener) else None)
         except tk.TclError:
             pass
 

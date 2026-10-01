@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from equipment_search import SearchCriteria, parse_range
-from focus_navigation import prepare_toplevel
+from focus_navigation import prepare_toplevel, schedule_while_alive
 
 
 RANGE_LABELS = {
@@ -301,10 +301,10 @@ class EquipmentSearchPanel(ttk.Frame):
                 return None
             target = first_entry(body)
             canvas.yview_moveto(0)
-            dialog.after(30, lambda: canvas.yview_moveto(0))
+            schedule_while_alive(dialog, 30, lambda: canvas.yview_moveto(0))
             prepare_toplevel(dialog, opener=opener, initial=target, canvas=canvas)
 
-        dialog.grab_set(); dialog.after_idle(initialize_dialog)
+        dialog.grab_set(); schedule_while_alive(dialog, None, initialize_dialog)
 
     @staticmethod
     def _reveal_widget(canvas, widget):

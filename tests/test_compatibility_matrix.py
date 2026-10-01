@@ -14,6 +14,7 @@ from compatibility import (  # noqa: E402
     LimitingFactor,
     MatrixCellResult,
 )
+from compatibility.matrix import MatrixCalculationCancelled  # noqa: E402
 
 
 def result(quantity, power, overload, valid=True):
@@ -127,6 +128,29 @@ class MatrixSelectionTests(unittest.TestCase):
         ]
         self.assertEqual(percentages, [None, 100])
         self.assertEqual(registered.equipment.database_id, custom.equipment.database_id)
+
+    @patch("compatibility.matrix.load_module", return_value=object())
+    @patch("compatibility.matrix.load_inverter", return_value=object())
+    @patch("compatibility.matrix.compare_operating_current_modes")
+    def test_progress_counts_real_pairs_and_cancel_discards_partial_result(
+        self, compare, _load_inverter, _load_module
+    ):
+        compare.return_value = (result(1, 0.5, 0), result(1, 0.5, 0))
+        self.matrix.add_inverter(self.inverter)
+        for _ in range(33):
+            self.matrix.add_module(self.modules[0])
+        updates = []
+        calculation = self.matrix.calculate(object(), progress=lambda done, total: updates.append((done, total)))
+        self.assertEqual(updates, [(16, 33), (32, 33), (33, 33)])
+        self.assertEqual(len(calculation.cells), 33)
+
+        updates.clear()
+        with self.assertRaises(MatrixCalculationCancelled):
+            self.matrix.calculate(
+                object(), progress=lambda done, total: updates.append((done, total)),
+                is_cancelled=lambda: bool(updates),
+            )
+        self.assertEqual(updates, [(16, 33)])
 
 
 class MatrixDisplayResultTests(unittest.TestCase):

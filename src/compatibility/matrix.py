@@ -88,6 +88,10 @@ class MatrixCalculation:
         return self.cells[(inverter_key, module_key)]
 
 
+class MatrixCalculationCancelled(Exception):
+    """Interrupção solicitada entre combinações, sem resultado parcial."""
+
+
 class CompatibilityMatrix:
     """Mantém seleções e produz um snapshot calculado da matriz."""
 
@@ -221,7 +225,7 @@ class CompatibilityMatrix:
         item = self.modules.pop(index)
         self.modules.insert(target, item)
 
-    def calculate(self, connection, options=None):
+    def calculate(self, connection, options=None, progress=None, is_cancelled=None):
         if not self.inverters or not self.modules:
             raise ValueError("Adicione ao menos um inversor e um módulo.")
         options = options or CompatibilityOptions()
@@ -230,6 +234,8 @@ class CompatibilityMatrix:
         cells = {}
         ordered_inverters = self.sorted_inverters()
         ordered_modules = tuple(self.modules)
+        completed = 0
+        total = len(ordered_inverters) * len(ordered_modules)
         for inverter_selection in ordered_inverters:
             if not inverter_selection.associated:
                 raise ValueError(
@@ -241,6 +247,8 @@ class CompatibilityMatrix:
             inverter = inverter_cache[inverter_id]
             row_options = inverter_selection.compatibility_options(options)
             for module_selection in ordered_modules:
+                if is_cancelled is not None and is_cancelled():
+                    raise MatrixCalculationCancelled()
                 if not module_selection.associated:
                     raise ValueError(
                         f"Módulo não associado: {module_selection.display_model}"
@@ -255,6 +263,9 @@ class CompatibilityMatrix:
                 cells[(inverter_selection.key, module_selection.key)] = (
                     MatrixCellResult(normal, ignored)
                 )
+                completed += 1
+                if progress is not None and (completed == total or completed % 16 == 0):
+                    progress(completed, total)
         return MatrixCalculation(ordered_inverters, ordered_modules, cells)
 
     def snapshot_with_cells(self, calculation):
