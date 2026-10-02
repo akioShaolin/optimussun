@@ -53,9 +53,9 @@ CREATE TABLE manufacturer(
 | `NUMBER_OF_INPUTS` | `INTEGER NULL DEFAULT -1` | total agregado de entradas; validado contra grupos MPPT e usado no cálculo/apresentação. |
 | `ACTIVE` | `INTEGER NOT NULL`, sem default, `CHECK (ACTIVE IN (0,1))` | booleano de catálogo. Principal lista ativos/inativos; matriz filtra ativos. |
 
-DDL adicional: FK `MANUFACTURER_ID → manufacturer.ID`, sem cascata. Índices `idx_inverter_manufacturer_id` e `idx_inverter_model`, ambos B-tree não únicos. Há uma duplicidade real de `(MANUFACTURER_ID, MODEL)`: fabricante 1, modelo `SIW200H M037 W00`, IDs 147 e 253. Não existe check numérico além de `ACTIVE`.
+DDL adicional: FK `MANUFACTURER_ID → manufacturer.ID`, sem cascata. Índices `idx_inverter_manufacturer_id` e `idx_inverter_model`, ambos B-tree não únicos. No levantamento de 01/10 havia uma duplicidade de `(MANUFACTURER_ID, MODEL)`: fabricante 1, modelo `SIW200H M037 W00`, IDs 147 e 253; a conferência posterior registra sua remoção. Não existe check numérico além de `ACTIVE`.
 
-As cinco grandezas CA (`RATED_ACTIVE_POWER` até `MAX_OUTPUT_CURRENT`) são tratadas pelo código como um único perfil implícito e serão candidatas à separação documental em `inverter_ac_output`; hoje filtros combinam diretamente colunas da mesma linha `inverter`.
+As cinco grandezas CA (`RATED_ACTIVE_POWER` até `MAX_OUTPUT_CURRENT`) são tratadas pelo código como um único perfil implícito. Na proposta futura, originam um ou dois registros `inverter_ac_profile` do tipo `AC_OUTPUT`, conforme a quantidade confirmada de modos; hoje filtros combinam diretamente colunas da mesma linha `inverter`.
 
 ## `mppt`
 
@@ -134,3 +134,9 @@ Contagem: nove expressões `CHECK` no DDL (categoria, dois ACTIVE, três classif
 ## Efeito esperado no código, sem alteração nesta etapa
 
 O acesso atual depende de `sqlite3`, placeholders `?`, `PRAGMA`, `COLLATE NOCASE` e `sqlite3.Row` em `optimus_sun.py`, `equipment_search.py`, `catalog/repository.py`, `compatibility/repository.py`, ferramentas e testes. A separação de perfis exigirá mudar DTOs/repositórios e tornar a saída parte explícita do contexto de cálculo. O cadastro deverá substituir as listas 1:N atuais por catálogo/perfis coerentes; busca CA deve aplicar critérios à mesma linha de perfil. Fórmulas em `optimus_lib.py` e `compatibility/engine.py` não precisam conhecer SQL, mas hoje recebem uma única potência nominal derivada de `inverter.RATED_ACTIVE_POWER`.
+
+## Conferência posterior do arquivo operacional
+
+Em 02/10/2026, uma nova leitura `mode=ro` encontrou o mesmo schema, porém 313 inversores em vez de 314 e hash SHA-256 `805f9c626a5474139dad270eecf39adc541419abb3a1db25cb9daa32e4864e36`. O duplicado histórico `SIW200H M037 W00` já havia sido removido pelo usuário. As demais contagens dessa leitura e as verificações de migração estão em [ETAPA_02_CONFERENCIAS.md](ETAPA_02_CONFERENCIAS.md). Este registro não reescreve o levantamento datado de 01/10/2026 nem atribui a alteração do banco a esta etapa documental.
+
+Ainda em 02/10/2026, após o usuário corrigir associações de modo, outra leitura `mode=ro` registrou hash `f467e8a234bca437ef7de807a4ca64d487ef842cfdcb9cac9185804df3b29188`, integridade `ok`, nenhuma violação de FK, 257 inversores com um modo e 56 com dois; nenhum permaneceu sem modo. O schema físico continuou inalterado. A evidência detalhada está na reconferência do mesmo relatório.

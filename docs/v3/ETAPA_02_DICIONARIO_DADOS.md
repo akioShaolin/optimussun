@@ -1,302 +1,314 @@
-# Etapa 02 — dicionário de dados proposto para a v3
+# Etapa 02 — dicionário de dados consolidado da v3
 
-Proposta documental em 01/10/2026 para a futura persistência MySQL do Optimus Sun v3. Este arquivo não é DDL executável e não autoriza migração. O inventário fiel do SQLite existente está em [ETAPA_02_SCHEMA_ATUAL.md](ETAPA_02_SCHEMA_ATUAL.md).
+Modelo documental consolidado em 02/10/2026. Não é DDL executável e não representa migração aplicada. O estado físico do SQLite permanece documentado em [ETAPA_02_SCHEMA_ATUAL.md](ETAPA_02_SCHEMA_ATUAL.md); as conferências do snapshot corrente estão em [ETAPA_02_CONFERENCIAS.md](ETAPA_02_CONFERENCIAS.md).
 
-## Convenções propostas
+## Convenções
 
-- Engine: `InnoDB`; charset `utf8mb4`; collation Unicode case-insensitive a definir na implementação.
-- Identificadores: `INT UNSIGNED AUTO_INCREMENT`. O volume atual e o crescimento previsível não justificam `BIGINT` para catálogos; a aplicação não deve depender do tamanho físico do ID.
-- `MPPT_INDEX`: `BIGINT UNSIGNED`, pois preserva a codificação atual por produto de primos e pode crescer muito mais rapidamente que a quantidade de linhas.
-- Grandezas físicas usam `DECIMAL`, evitando aproximações binárias de `FLOAT`. As precisões abaixo são propostas conservadoras e devem ser confrontadas com os datasheets antes do DDL definitivo.
-- Potência em W, tensão em V, corrente em A, dimensões em mm, massa em kg, temperatura em °C, tempo em ms e percentuais em pontos percentuais (`50.000` significa 50%).
-- Dado técnico desconhecido é `NULL`. Zero só representa zero real; `-1` não será sentinela genérica.
-- Nomes SQL permanecem em inglês e `snake_case` no futuro DDL. Neste documento, nomes aparecem em maiúsculas para facilitar o paralelo com o SQLite atual.
-- `ACTIVE` só existe onde desativar sem apagar tem significado de negócio. Tabelas filhas puramente descritivas não recebem a coluna por padrão.
-- Regras de coerência entre perfis, campos obrigatórios para ativação e capacidades por tipo de sistema ficam no serviço de domínio. O banco mantém integridade referencial e invariantes estruturais locais.
+- MySQL/InnoDB e `utf8mb4`; collation Unicode sem diferenciar maiúsculas/minúsculas.
+- A aplicação remove espaços externos, reduz sequências internas de espaços a um e preserva a grafia de exibição. Não transforma tudo em maiúsculas.
+- PKs: `INT UNSIGNED AUTO_INCREMENT`. `MPPT_INDEX` e `BATTERY_INDEX`: `BIGINT UNSIGNED`, devido ao crescimento do produto de primos.
+- Grandezas decimais usam duas casas por padrão. Coeficientes térmicos usam `DECIMAL(8,5)`, pois o legado contém até cinco casas relevantes. A migração não arredonda silenciosamente.
+- Unidades: W, V, A, mm, kg, °C, ms e percentual em pontos percentuais (`50.00` = 50%). No CSV da matriz, o contrato existente de sobrecarga em razão decimal é preservado.
+- Dado técnico desconhecido ou não aplicável é `NULL`; zero e valores negativos fisicamente válidos não significam ausência. `MPPT_INDEX=0` e `BATTERY_INDEX=0` são códigos estruturais válidos.
+- `ACTIVE` significa disponível para uso, não ficha integralmente preenchida. Rascunhos podem ser incompletos.
+- `ROW_VERSION` pertence aos agregados editáveis e sustenta concorrência otimista.
 
-## Visão das relações
+## Relações propostas
 
-```text
-manufacturer 1 ── N inverter 1 ── N mppt
-                           ├────── N inverter_ac_output ── N:1 inverter_output_mode
-                           ├────── N inverter_ac_input
-                           ├────── N inverter_eps_output ─ N:1 inverter_output_mode
-                           ├────── N inverter_battery
-                           ├────── N inverter_system
-                           └────── N inverter_communication
-
-manufacturer 1 ── N module
+```mermaid
+erDiagram
+    MANUFACTURER ||--o{ INVERTER : fabrica
+    MANUFACTURER ||--o{ MODULE : fabrica
+    INVERTER ||--o{ MPPT : possui
+    INVERTER ||--o{ INVERTER_AC_PROFILE : possui
+    INVERTER ||--o{ INVERTER_BATTERY : possui
+    INVERTER ||--o{ INVERTER_SYSTEM : classifica
+    INVERTER ||--o{ INVERTER_COMMUNICATION : oferece
+    INVERTER_OUTPUT_MODE ||--o{ INVERTER_AC_PROFILE : caracteriza_saidas
 ```
 
-Um perfil elétrico é uma linha coerente: os valores usados juntos devem vir da mesma linha. A presença do perfil declara suporte àquela interface; não haverá tabela-ponte redundante de capacidades.
+São **nove tabelas de domínio**: `manufacturer`, `inverter`, `mppt`, `module`, `inverter_ac_profile`, `inverter_battery`, `inverter_system`, `inverter_communication` e `inverter_output_mode`. Tabelas futuras de auditoria, migração ou jobs são metadados técnicos e não entram nessa contagem.
 
 ## 1. `manufacturer`
 
-Mantém fabricantes de inversores, módulos ou ambos.
+| Campo | Tipo proposto | Nulo/default | Regra |
+| --- | --- | --- | --- |
+| `ID` | `INT UNSIGNED` PK AI | não | Identidade. |
+| `NAME` | `VARCHAR(150)` | não | Nome preservado para exibição; comparação normalizada. |
+| `CATEGORY` | `TINYINT UNSIGNED` | não / `0` | `CHECK (CATEGORY IN (0,1,2))`: inversor, módulo ou ambos. |
 
-| Campo | SQLite atual | MySQL proposto | Nulo/default | Regra e finalidade |
-| --- | --- | --- | --- | --- |
-| `ID` | `INTEGER` | `INT UNSIGNED` PK AI | não | Identidade. |
-| `NAME` | `TEXT` | `VARCHAR(150)` | não | Nome exibido e pesquisável. |
-| `CATEGORY` | `INTEGER` | `TINYINT UNSIGNED` | não / `0` | 0=inversor, 1=módulo, 2=ambos; `CHECK (CATEGORY IN (0,1,2))`. |
-
-Índices: `INDEX(NAME)`. A unicidade de nome depende da política de canonicalização pendente. Exclusão deve ser `RESTRICT` enquanto houver equipamentos associados.
+Índice de busca em `NAME`. Exclusão `RESTRICT` se houver equipamentos. A política final de nomes homônimos de fabricantes continua uma decisão de negócio.
 
 ## 2. `inverter`
 
-Identidade e propriedades comuns do inversor. As cinco grandezas CA legadas deixam esta tabela e passam a compor perfis em `inverter_ac_output`.
+| Campo | Tipo proposto | Nulo/default | Regra |
+| --- | --- | --- | --- |
+| `ID` | `INT UNSIGNED` PK AI | não | Identidade. |
+| `MODEL` | `VARCHAR(255)` | não | Modelo comercial. |
+| `MANUFACTURER_ID` | `INT UNSIGNED` FK | não | Fabricante; exclusão `RESTRICT`. |
+| `DIM_WIDTH`, `DIM_HEIGHT`, `DIM_DEPTH` | `DECIMAL(10,2)` | sim / `NULL` | mm; descritivos. |
+| `DIM_WEIGHT` | `DECIMAL(10,2)` | sim / `NULL` | kg; descritivo. |
+| `MAX_OPERATING_TEMPERATURE`, `MIN_OPERATING_TEMPERATURE` | `DECIMAL(6,2)` | sim / `NULL` | °C; valores negativos são válidos. |
+| `COOLING_MODE` | `VARCHAR(150)` | sim / `NULL` | Descritivo extensível. |
+| `PROTECTION_DEGREE` | `VARCHAR(100)` | sim / `NULL` | Descritivo extensível. |
+| `TOPOLOGY` | `VARCHAR(150)` | sim / `NULL` | Descritivo extensível. |
+| `OVERLOAD` | `DECIMAL(7,2)` | sim / `NULL` | Percentual adicional cadastrado. |
+| `NUMBER_OF_TRACKERS` | `SMALLINT UNSIGNED` | sim / `NULL` | Total físico de MPPTs. |
+| `NUMBER_OF_INPUTS` | `SMALLINT UNSIGNED` | sim / `NULL` | Total físico de entradas FV. |
+| `NUMBER_OF_BATTERY_INPUTS` | `SMALLINT UNSIGNED` | sim / `NULL` | Total físico de entradas de bateria; zero=ausência conhecida. |
+| `MAX_EFFICIENCY`, `EURO_EFFICIENCY` | `DECIMAL(6,2)` | sim / `NULL` | Eficiências em %. |
+| `ACTIVE` | `BOOLEAN` | não / `FALSE` | Disponibilidade no catálogo/matriz. |
+| `ROW_VERSION` | `INT UNSIGNED` | não / `1` | Concorrência otimista. |
 
-| Campo | SQLite atual | MySQL proposto | Nulo/default | Regra e finalidade |
-| --- | --- | --- | --- | --- |
-| `ID` | `INTEGER` | `INT UNSIGNED` PK AI | não | Identidade. |
-| `MODEL` | `TEXT` | `VARCHAR(255)` | não | Modelo comercial. |
-| `MANUFACTURER_ID` | `INTEGER` | `INT UNSIGNED` FK | não | Fabricante; exclusão `RESTRICT`. |
-| `DIM_WIDTH` | `REAL` | `DECIMAL(10,2)` | sim / `NULL` | Largura em mm. |
-| `DIM_HEIGHT` | `REAL` | `DECIMAL(10,2)` | sim / `NULL` | Altura em mm. |
-| `DIM_DEPTH` | `REAL` | `DECIMAL(10,2)` | sim / `NULL` | Profundidade em mm. |
-| `DIM_WEIGHT` | `REAL` | `DECIMAL(10,3)` | sim / `NULL` | Massa em kg. |
-| `MAX_OPERATING_TEMPERATURE` | `INTEGER` | `DECIMAL(6,2)` | sim / `NULL` | Limite superior; pode ser negativo. |
-| `MIN_OPERATING_TEMPERATURE` | `INTEGER` | `DECIMAL(6,2)` | sim / `NULL` | Limite inferior; pode ser negativo. |
-| `COOLING_MODE` | `TEXT` | `VARCHAR(150)` | sim / `NULL` | Descrição extensível. |
-| `PROTECTION_DEGREE` | `TEXT` | `VARCHAR(100)` | sim / `NULL` | Grau IP/NEMA ou equivalente. |
-| `TOPOLOGY` | `TEXT` | `VARCHAR(150)` | sim / `NULL` | Topologia declarada. |
-| `OVERLOAD` | `INTEGER` | `DECIMAL(7,3)` | sim / `NULL` | Sobrecarga CC cadastrada em %. |
-| `NUMBER_OF_TRACKERS` | `INTEGER` | `SMALLINT UNSIGNED` | sim / `NULL` | Total físico de MPPTs. |
-| `NUMBER_OF_INPUTS` | `INTEGER` | `SMALLINT UNSIGNED` | sim / `NULL` | Total físico de entradas CC. |
-| `MAX_EFFICIENCY` | — (novo) | `DECIMAL(6,3)` | sim / `NULL` | Eficiência máxima em %. |
-| `EURO_EFFICIENCY` | — (novo) | `DECIMAL(6,3)` | sim / `NULL` | Eficiência europeia em %. |
-| `ACTIVE` | `INTEGER` | `BOOLEAN` | não / `FALSE` | Disponibilidade no catálogo. |
-| `ROW_VERSION` | — (novo) | `INT UNSIGNED` | não / `1` | Concorrência otimista; incremento pelo serviço. |
+As cinco grandezas CA legadas saem do pai e migram para um perfil `AC_OUTPUT` padrão. Índices em fabricante/modelo e `ACTIVE`; `UNIQUE(MANUFACTURER_ID, MODEL)` após normalização aprovada e conferência do legado. A conferência atual não encontrou duplicatas.
 
-Campos removidos do pai: `RATED_ACTIVE_POWER`, `MAX_ACTIVE_POWER`, `RATED_OUTPUT_VOLTAGE`, `RATED_OUTPUT_CURRENT` e `MAX_OUTPUT_CURRENT`. Índices: `(MANUFACTURER_ID, MODEL)`, `MODEL` e `ACTIVE`. Não se propõe `UNIQUE(MANUFACTURER_ID, MODEL)` enquanto a duplicidade real não for conciliada.
-
-Checks locais: dimensões, massa, sobrecarga e eficiências não negativas quando presentes; eficiências no intervalo 0–100; mínimo de temperatura não maior que máximo quando ambos existirem. A completude necessária para ativar um inversor pertence ao domínio.
+Inativar o inversor não inativa nem apaga seus filhos: o principal pode consultar e simular equipamento inativo com dados válidos. A matriz exige equipamento ativo.
 
 ## 3. `mppt`
 
-Preserva grupos de MPPT e a semântica existente de `MPPT_INDEX`. Correntes por MPPT e por string tornam-se grandezas independentes.
+| Campo | Tipo proposto | Nulo/default | Regra |
+| --- | --- | --- | --- |
+| `ID` | `INT UNSIGNED` PK AI | não | Identidade. |
+| `INVERTER_ID` | `INT UNSIGNED` FK | não | Pai; exclusão integral do inversor em `CASCADE`. |
+| `MPPT_INDEX` | `BIGINT UNSIGNED` | não / `0` | Produto dos primos das posições; `0`=grupo homogêneo. |
+| `NUMBER_OF_INPUTS` | `SMALLINT UNSIGNED` | sim / `NULL` | Entradas por MPPT representado. |
+| `MAX_INPUT_VOLTAGE`, `MIN_STARTUP_VOLTAGE` | `DECIMAL(10,2)` | sim / `NULL` | Limites em Vcc. |
+| `MAX_OPERATING_VOLTAGE`, `MIN_OPERATING_VOLTAGE` | `DECIMAL(10,2)` | sim / `NULL` | Faixa MPPT em Vcc. |
+| `MAX_FULL_LOAD_VOLTAGE`, `MIN_FULL_LOAD_VOLTAGE` | `DECIMAL(10,2)` | sim / `NULL` | Faixa de plena carga em Vcc. |
+| `RATED_INPUT_VOLTAGE` | `DECIMAL(10,2)` | sim / `NULL` | Tensão CC nominal. |
+| `MAX_SHORT_CIRCUIT_CURRENT_PER_MPPT` | `DECIMAL(10,2)` | sim / `NULL` | Limite Isc agregado do MPPT. |
+| `MAX_SHORT_CIRCUIT_CURRENT_PER_STRING` | `DECIMAL(10,2)` | sim / `NULL` | Limite Isc por entrada/string, somente com fonte explícita. |
+| `MAX_OPERATING_CURRENT_PER_MPPT` | `DECIMAL(10,2)` | sim / `NULL` | Limite operacional agregado do MPPT. |
+| `MAX_OPERATING_CURRENT_PER_STRING` | `DECIMAL(10,2)` | sim / `NULL` | Limite operacional por entrada/string, nunca derivado. |
 
-| Campo | SQLite atual | MySQL proposto | Nulo/default | Regra e finalidade |
-| --- | --- | --- | --- | --- |
-| `ID` | `INTEGER` | `INT UNSIGNED` PK AI | não | Identidade do grupo. |
-| `INVERTER_ID` | `INTEGER` | `INT UNSIGNED` FK | não | Pai; exclusão `CASCADE`. |
-| `MPPT_INDEX` | `INTEGER` | `BIGINT UNSIGNED` | não / `0` | `0`=grupo homogêneo; demais valores preservam produto de primos. |
-| `NUMBER_OF_INPUTS` | `INTEGER` | `SMALLINT UNSIGNED` | sim / `NULL` | Entradas por MPPT do grupo. |
-| `MAX_INPUT_VOLTAGE` | `INTEGER` | `DECIMAL(10,3)` | sim / `NULL` | Tensão CC máxima absoluta. |
-| `MIN_STARTUP_VOLTAGE` | `INTEGER` | `DECIMAL(10,3)` | sim / `NULL` | Tensão mínima de partida. |
-| `MAX_OPERATING_VOLTAGE` | `INTEGER` | `DECIMAL(10,3)` | sim / `NULL` | Faixa MPPT, limite superior. |
-| `MIN_OPERATING_VOLTAGE` | `INTEGER` | `DECIMAL(10,3)` | sim / `NULL` | Faixa MPPT, limite inferior. |
-| `MAX_FULL_LOAD_VOLTAGE` | `INTEGER` | `DECIMAL(10,3)` | sim / `NULL` | Plena carga, limite superior. |
-| `MIN_FULL_LOAD_VOLTAGE` | `INTEGER` | `DECIMAL(10,3)` | sim / `NULL` | Plena carga, limite inferior. |
-| `RATED_INPUT_VOLTAGE` | `INTEGER` | `DECIMAL(10,3)` | sim / `NULL` | Tensão CC nominal. |
-| `MAX_SHORT_CIRCUIT_CURRENT_PER_MPPT` | `REAL` (`MAX_SHORT_CIRCUIT_CURRENT`) | `DECIMAL(10,3)` | sim / `NULL` | Limite Isc agregado do MPPT. |
-| `MAX_SHORT_CIRCUIT_CURRENT_PER_STRING` | — (novo) | `DECIMAL(10,3)` | sim / `NULL` | Limite Isc de cada entrada/string; nunca derivado por divisão. |
-| `MAX_OPERATING_CURRENT_PER_MPPT` | `REAL` (`MAX_OPERATING_CURRENT`) | `DECIMAL(10,3)` | sim / `NULL` | Limite operacional agregado do MPPT. |
-| `MAX_OPERATING_CURRENT_PER_STRING` | — (novo) | `DECIMAL(10,3)` | sim / `NULL` | Limite operacional de cada entrada/string; nunca derivado. |
-
-Índice em `INVERTER_ID`; exclusão do inversor em cascata. Não se propõe unicidade automática de `(INVERTER_ID, MPPT_INDEX)` até validar todos os padrões heterogêneos e a edição de grupos. Checks locais impedem grandezas negativas e garantem mínimos não maiores que máximos quando ambos estiverem presentes.
+`UNIQUE(INVERTER_ID, MPPT_INDEX)` é aprovado, condicionado à conferência executada — que não encontrou duplicatas. A aplicação também valida fatoração sem repetição, posições existentes, cobertura e ausência de sobreposição; unicidade do código não substitui essas regras.
 
 ## 4. `module`
 
-Catálogo de módulos fotovoltaicos.
+| Campo | Tipo proposto | Nulo/default | Regra |
+| --- | --- | --- | --- |
+| `ID` | `INT UNSIGNED` PK AI | não | Identidade. |
+| `MODEL` | `VARCHAR(255)` | não | Modelo comercial. |
+| `MANUFACTURER_ID` | `INT UNSIGNED` FK | não | Fabricante; exclusão `RESTRICT`. |
+| `DIM_WIDTH`, `DIM_HEIGHT`, `DIM_DEPTH`, `DIM_WEIGHT` | `DECIMAL(10,2)` | sim / `NULL` | Descritivos mecânicos. |
+| `WP` | `DECIMAL(12,2)` | sim / `NULL` | Potência nominal em Wp. |
+| `VMPP`, `IMPP`, `VOC`, `ISC` | `DECIMAL(10,2)` | sim / `NULL` | Grandezas elétricas em V/A. |
+| `SOLAR_CELLS`, `CELL_TYPE`, `SURFACE_TYPE` | `VARCHAR(100)` | sim / `NULL` | Textos extensíveis, sem checks de vocabulário. |
+| `COEF_PMAX`, `COEF_VOC`, `COEF_ISC` | `DECIMAL(8,5)` | sim / `NULL` | %/°C; preserva a precisão efetiva encontrada. |
+| `ACTIVE` | `BOOLEAN` | não / `FALSE` | Disponibilidade no catálogo/matriz. |
+| `ROW_VERSION` | `INT UNSIGNED` | não / `1` | Concorrência otimista. |
 
-| Campo | SQLite atual | MySQL proposto | Nulo/default | Regra e finalidade |
-| --- | --- | --- | --- | --- |
-| `ID` | `INTEGER` | `INT UNSIGNED` PK AI | não | Identidade. |
-| `MODEL` | `TEXT` | `VARCHAR(255)` | não | Modelo comercial. |
-| `MANUFACTURER_ID` | `INTEGER` | `INT UNSIGNED` FK | não | Fabricante; exclusão `RESTRICT`. |
-| `DIM_WIDTH`, `DIM_HEIGHT`, `DIM_DEPTH` | `REAL` | `DECIMAL(10,2)` | sim / `NULL` | Dimensões em mm. |
-| `DIM_WEIGHT` | `REAL` | `DECIMAL(10,3)` | sim / `NULL` | Massa em kg. |
-| `WP` | `INTEGER` | `DECIMAL(12,2)` | sim / `NULL` | Potência nominal em Wp. |
-| `VMPP`, `VOC` | `REAL` | `DECIMAL(10,3)` | sim / `NULL` | Tensões CC em V. |
-| `IMPP`, `ISC` | `REAL` | `DECIMAL(10,3)` | sim / `NULL` | Correntes CC em A. |
-| `SOLAR_CELLS` | `TEXT` | `VARCHAR(100)` | sim / `NULL` | Material/tecnologia, sem enum fechado. |
-| `CELL_TYPE` | `TEXT` | `VARCHAR(100)` | sim / `NULL` | Tipo de célula, sem enum fechado. |
-| `SURFACE_TYPE` | `TEXT` | `VARCHAR(100)` | sim / `NULL` | Superfície, sem enum fechado. |
-| `COEF_PMAX`, `COEF_VOC`, `COEF_ISC` | `REAL` | `DECIMAL(8,5)` | sim / `NULL` | Coeficientes em %/°C; negativos são válidos. |
-| `ACTIVE` | `INTEGER` | `BOOLEAN` | não / `FALSE` | Disponibilidade no catálogo. |
-| `ROW_VERSION` | — (novo) | `INT UNSIGNED` | não / `1` | Concorrência otimista. |
+`UNIQUE(MANUFACTURER_ID, MODEL)` após normalização. A conferência atual não encontrou duplicatas. O principal pode usar módulo inativo com dados válidos; a matriz exige módulo ativo.
 
-Índices: `(MANUFACTURER_ID, MODEL)`, `MODEL` e `ACTIVE`. A proposta pode usar `UNIQUE(MANUFACTURER_ID, MODEL)` após definir canonicalização; o snapshot não possui duplicatas desse par. Checks fechados de tecnologia são removidos. Checks locais impedem dimensões e grandezas elétricas negativas, sem confundir coeficientes físicos negativos com ausência.
+## 5. `inverter_ac_profile`
 
-## 5. `inverter_ac_output`
+Cada linha é um perfil elétrico coerente. Valores de linhas diferentes nunca são combinados para fabricar um perfil. `PROFILE_TYPE` é controlado pelo sistema, com rótulos localizados na interface.
 
-Perfil de saída CA de operação on-grid. Um inversor pode ter mais de um perfil coerente para redes/modos diferentes.
+| Campo | Tipo proposto | Nulo/default | Aplicabilidade |
+| --- | --- | --- | --- |
+| `ID` | `INT UNSIGNED` PK AI | não | Identidade do perfil. |
+| `INVERTER_ID` | `INT UNSIGNED` FK | não | Pai; exclusão integral em `CASCADE`. |
+| `PROFILE_TYPE` | `VARCHAR(16)` | não | `CHECK IN ('AC_OUTPUT','AC_INPUT','EPS_OUTPUT')`. |
+| `OUTPUT_MODE_ID` | `INT UNSIGNED` FK | sim / `NULL` | Obrigatório para saída ativa `AC_OUTPUT`/`EPS_OUTPUT`; não aplicável a `AC_INPUT`. |
+| `RATED_ACTIVE_POWER` | `DECIMAL(12,2)` | sim / `NULL` | Potência contínua nominal; base da sobrecarga em perfis de saída. |
+| `MAX_ACTIVE_POWER` | `DECIMAL(12,2)` | sim / `NULL` | Máximo não-pico quando informado. |
+| `MAX_PEAK_ACTIVE_POWER` | `DECIMAL(12,2)` | sim / `NULL` | Pico, tipicamente EPS; não substitui nominal. |
+| `RATED_LINE_TO_LINE_VOLTAGE` | `DECIMAL(10,2)` | sim / `NULL` | Tensão nominal fase–fase, de entrada ou saída conforme o tipo. |
+| `RATED_LINE_TO_NEUTRAL_VOLTAGE` | `DECIMAL(10,2)` | sim / `NULL` | Tensão nominal fase–neutro, de entrada ou saída conforme o tipo. |
+| `RATED_CURRENT` | `DECIMAL(10,2)` | sim / `NULL` | Entrada ou saída conforme o tipo. |
+| `MAX_CURRENT` | `DECIMAL(10,2)` | sim / `NULL` | Entrada ou saída conforme o tipo. |
+| `SWITCHING_TIME` | `DECIMAL(10,2)` | sim / `NULL` | ms; aplicável a EPS. Desconhecido não vira zero. |
+| `ACTIVE` | `BOOLEAN` | não / `FALSE` | Disponível para escolha/cálculo. |
+| `IS_DEFAULT` | `BOOLEAN` | não / `FALSE` | Perfil de saída inicialmente usado pelo motor. |
 
-| Campo | SQLite atual | MySQL proposto | Nulo/default | Regra e finalidade |
-| --- | --- | --- | --- | --- |
-| `ID` | — (novo) | `INT UNSIGNED` PK AI | não | Identidade do perfil. |
-| `INVERTER_ID` | implícito no pai | `INT UNSIGNED` FK | não | Pai; exclusão `CASCADE`. |
-| `OUTPUT_MODE_ID` | associação textual separada | `INT UNSIGNED` FK | não | Catálogo global; exclusão `RESTRICT`. |
-| `RATED_ACTIVE_POWER` | `inverter.INTEGER` | `DECIMAL(12,2)` | sim / `NULL` | Potência ativa nominal contínua em W. |
-| `MAX_ACTIVE_POWER` | `inverter.INTEGER` | `DECIMAL(12,2)` | sim / `NULL` | Potência ativa máxima em W. |
-| `RATED_OUTPUT_VOLTAGE` | `inverter.REAL` | `DECIMAL(10,3)` | sim / `NULL` | Tensão nominal CA. |
-| `RATED_OUTPUT_CURRENT` | `inverter.REAL` | `DECIMAL(10,3)` | sim / `NULL` | Corrente nominal CA. |
-| `MAX_OUTPUT_CURRENT` | `inverter.REAL` | `DECIMAL(10,3)` | sim / `NULL` | Corrente máxima CA. |
-| `ACTIVE` | — (novo) | `BOOLEAN` | não / `FALSE` | Perfil disponível para uso. |
+### Aplicabilidade por tipo
 
-Índices em `INVERTER_ID`, `OUTPUT_MODE_ID` e `(INVERTER_ID, ACTIVE)`. A busca deve aplicar todos os filtros elétricos à mesma linha, sem combinar valores de perfis distintos. No domínio, on-grid exige ao menos um perfil ativo de saída CA.
+| Campo | `AC_OUTPUT` | `AC_INPUT` | `EPS_OUTPUT` |
+| --- | --- | --- | --- |
+| `OUTPUT_MODE_ID` | necessário quando ativo | `NULL` | necessário quando ativo |
+| `RATED_ACTIVE_POWER` | potência nominal de saída | potência nominal absorvida | potência contínua EPS |
+| `MAX_ACTIVE_POWER` | aplicável | aplicável | aplicável se o datasheet distinguir máximo contínuo |
+| `MAX_PEAK_ACTIVE_POWER` | normalmente `NULL` | `NULL` | aplicável |
+| tensões fase–fase/fase–neutro e correntes | saída | entrada | saída EPS |
+| `SWITCHING_TIME` | `NULL` | `NULL` | aplicável |
+| `IS_DEFAULT` | permitido | sempre `FALSE` | permitido |
 
-## 6. `inverter_ac_input`
+Índices em `INVERTER_ID`, `PROFILE_TYPE`, `OUTPUT_MODE_ID` e `(INVERTER_ID, ACTIVE)`. O banco garante o vocabulário e booleanos. Uma restrição/índice funcional deve garantir no máximo um perfil de saída padrão por inversor; a implementação MySQL será definida no DDL, pois unicidade condicional requer solução específica.
 
-Perfil de entrada CA, aplicável a equipamentos híbridos quando houver carregamento/entrada pela rede ou gerador.
+O serviço garante que o padrão esteja ativo, seja `AC_OUTPUT` ou `EPS_OUTPUT` e seja compatível com a classificação. On-grid/híbrido iniciam com `AC_OUTPUT`; off-grid inicia com `EPS_OUTPUT`. `AC_INPUT` nunca é padrão. Trocar o padrão e excluir/inativar o antigo ocorre na mesma transação. Um rascunho pode temporariamente não ter padrão, mas não está pronto para cálculo.
 
-| Campo | SQLite atual | MySQL proposto | Nulo/default | Regra e finalidade |
-| --- | --- | --- | --- | --- |
-| `ID` | — (novo) | `INT UNSIGNED` PK AI | não | Identidade do perfil. |
-| `INVERTER_ID` | — (novo) | `INT UNSIGNED` FK | não | Pai; exclusão `CASCADE`. |
-| `RATED_ACTIVE_POWER` | — (novo) | `DECIMAL(12,2)` | sim / `NULL` | Potência nominal absorvida em W. |
-| `MAX_ACTIVE_POWER` | — (novo) | `DECIMAL(12,2)` | sim / `NULL` | Potência máxima absorvida em W. |
-| `RATED_INPUT_VOLTAGE` | — (novo) | `DECIMAL(10,3)` | sim / `NULL` | Tensão nominal CA de entrada. |
-| `RATED_INPUT_CURRENT` | — (novo) | `DECIMAL(10,3)` | sim / `NULL` | Corrente nominal CA de entrada. |
-| `MAX_INPUT_CURRENT` | — (novo) | `DECIMAL(10,3)` | sim / `NULL` | Corrente máxima CA de entrada. |
-| `ACTIVE` | — (novo) | `BOOLEAN` | não / `FALSE` | Perfil disponível para uso. |
+O usuário pode escolher outro perfil de saída ativo na sessão; isso não muda `IS_DEFAULT`. Sem padrão válido nem seleção explícita válida, o fluxo solicita escolha. Nunca escolhe maior, menor ou primeira linha. A matriz e o resultado carregam `profile_id`, tipo, modo, tensões fase–fase/fase–neutro e potência nominal efetivamente usados.
 
-Índices em `INVERTER_ID` e `(INVERTER_ID, ACTIVE)`. A presença do perfil declara suporte; não se cria flag equivalente no pai.
+### Referências de tensão
 
-## 7. `inverter_eps_output`
+Não existe uma terceira tensão nominal genérica. `NULL` significa desconhecido ou não aplicável e nunca é convertido em zero. Exemplos exclusivamente ilustrativos:
 
-Perfil de saída de emergência/off-grid. Potência nominal contínua e pico permanecem conceitos separados; tempo de comutação desconhecido é `NULL`, nunca zero.
+| Configuração | Fase–fase | Fase–neutro |
+| --- | ---: | ---: |
+| Trifásico, três fios, 380 V, sem referência L–N aplicável | 380,00 | `NULL` |
+| Trifásico, quatro fios, 380/220 V | 380,00 | 220,00 |
+| Monofásico fase–neutro, 220 V | `NULL` | 220,00 |
+| Monofásico entre fases, 220 V | 220,00 | `NULL` |
 
-| Campo | SQLite atual | MySQL proposto | Nulo/default | Regra e finalidade |
-| --- | --- | --- | --- | --- |
-| `ID` | — (novo) | `INT UNSIGNED` PK AI | não | Identidade do perfil. |
-| `INVERTER_ID` | — (novo) | `INT UNSIGNED` FK | não | Pai; exclusão `CASCADE`. |
-| `OUTPUT_MODE_ID` | — (novo) | `INT UNSIGNED` FK | não | Catálogo global; exclusão `RESTRICT`. |
-| `RATED_ACTIVE_POWER` | — (novo) | `DECIMAL(12,2)` | sim / `NULL` | Potência contínua em W. |
-| `MAX_PEAK_ACTIVE_POWER` | — (novo) | `DECIMAL(12,2)` | sim / `NULL` | Pico em W, sem substituir potência contínua. |
-| `RATED_OUTPUT_VOLTAGE` | — (novo) | `DECIMAL(10,3)` | sim / `NULL` | Tensão nominal da saída EPS. |
-| `RATED_OUTPUT_CURRENT` | — (novo) | `DECIMAL(10,3)` | sim / `NULL` | Corrente nominal da saída EPS. |
-| `MAX_OUTPUT_CURRENT` | — (novo) | `DECIMAL(10,3)` | sim / `NULL` | Corrente máxima da saída EPS. |
-| `SWITCHING_TIME` | — (novo) | `DECIMAL(10,3)` | sim / `NULL` | Tempo de comutação em ms. |
-| `ACTIVE` | — (novo) | `BOOLEAN` | não / `FALSE` | Perfil disponível para uso. |
+Uma configuração 380/220 V é um perfil; opções 380 V e 480 V são perfis distintos. Não se calcula uma tensão a partir da outra, não se presume relação universal e `SINGLE_PHASE` sozinho não informa qual referência contém o valor. Potência nominal continua vindo de `RATED_ACTIVE_POWER`, sem fórmula nova baseada em tensão/corrente.
 
-Índices em `INVERTER_ID`, `OUTPUT_MODE_ID` e `(INVERTER_ID, ACTIVE)`. Off-grid exige perfil EPS e não deve receber perfil CA de saída fictício apenas para preencher campos legados.
+Rótulos da interface: **Tensão nominal fase–fase (V)** e **Tensão nominal fase–neutro (V)**. Um equipamento confirmado para três e quatro fios em 380 V e 480 V pode ter quatro perfis, cada qual com potência/correntes próprias. Isso não autoriza gerar quatro combinações para todos os equipamentos.
 
-## 8. `inverter_battery`
+## 6. `inverter_battery`
 
-Perfis de interface/configuração de bateria. O nome conceitual fechado é `inverter_battery`.
+Representa grupos de entradas físicas com características compartilhadas, usando a mesma codificação por produtos de primos dos MPPTs.
 
-| Campo | SQLite atual | MySQL proposto | Nulo/default | Regra e finalidade |
-| --- | --- | --- | --- | --- |
-| `ID` | — (novo) | `INT UNSIGNED` PK AI | não | Identidade da configuração. |
-| `INVERTER_ID` | — (novo) | `INT UNSIGNED` FK | não | Pai; exclusão `CASCADE`. |
-| `BATTERY_INDEX` | — (novo) | `SMALLINT UNSIGNED` | não | Interface física: 0=primeira, 1=segunda etc. |
-| `BATTERY_TYPE` | — (novo) | `VARCHAR(150)` | sim / `NULL` | Química/família suportada, extensível. |
-| `BATTERY_VOLTAGE_MIN` | — (novo) | `DECIMAL(10,3)` | sim / `NULL` | Tensão mínima em V. |
-| `BATTERY_VOLTAGE_MAX` | — (novo) | `DECIMAL(10,3)` | sim / `NULL` | Tensão máxima em V. |
-| `MAX_CHARGE_CURRENT` | — (novo) | `DECIMAL(10,3)` | sim / `NULL` | Corrente máxima de carga em A. |
-| `MAX_DISCHARGE_CURRENT` | — (novo) | `DECIMAL(10,3)` | sim / `NULL` | Corrente máxima de descarga em A. |
-| `BATTERY_COM` | — (novo) | `VARCHAR(150)` | sim / `NULL` | Protocolo/meio de comunicação com bateria. |
-| `ACTIVE` | — (novo) | `BOOLEAN` | não / `FALSE` | Configuração disponível para uso. |
+| Campo | Tipo proposto | Nulo/default | Regra |
+| --- | --- | --- | --- |
+| `ID` | `INT UNSIGNED` PK AI | não | Identidade. |
+| `INVERTER_ID` | `INT UNSIGNED` FK | não | Pai; exclusão integral em `CASCADE`. |
+| `BATTERY_INDEX` | `BIGINT UNSIGNED` | não / `0` | Produto dos primos das posições; `0`=grupo homogêneo de todas as entradas conhecidas. |
+| `BATTERY_TYPE` | `VARCHAR(150)` | sim / `NULL` | Tecnologia/família suportada. |
+| `BATTERY_VOLTAGE_MIN`, `BATTERY_VOLTAGE_MAX` | `DECIMAL(10,2)` | sim / `NULL` | Faixa em V por entrada representada pelo grupo. |
+| `MAX_CHARGE_CURRENT`, `MAX_DISCHARGE_CURRENT` | `DECIMAL(10,2)` | sim / `NULL` | A por entrada representada pelo grupo, somente com evidência explícita. |
+| `BATTERY_COM` | `VARCHAR(150)` | sim / `NULL` | Comunicação compatível. |
+| `ACTIVE` | `BOOLEAN` | não / `FALSE` | Grupo disponível. |
 
-Índices em `INVERTER_ID`, `(INVERTER_ID, BATTERY_INDEX)` e `(INVERTER_ID, ACTIVE)`. Deliberadamente não há `UNIQUE(INVERTER_ID, BATTERY_INDEX)`: uma interface física pode possuir várias configurações suportadas. Checks locais garantem valores não negativos e tensão mínima não maior que máxima.
+Não há “baterias por entrada”, bancos instalados, limite CAN, junction box, autonomia ou estado de carga. Limite total compartilhado do inversor não é dividido nem copiado para cada entrada; se essa grandeza aparecer em datasheets, será necessário decidir uma coluna agregada própria.
 
-## 9. `inverter_system`
+Validações do serviço:
 
-Capacidades de sistema declaradas pelo inversor.
+- fatorar somente pelos primos das posições de `1..NUMBER_OF_BATTERY_INPUTS`;
+- rejeitar `1`, fatores repetidos, fatores residuais e posições inexistentes;
+- impedir sobreposição entre grupos ativos;
+- impedir grupo homogêneo ativo `0` coexistindo com qualquer outro grupo ativo;
+- exigir revisão da cobertura quando a quantidade total for desconhecida ou alterada;
+- preservar inativos, que não ocupam posições; reativação revalida tudo;
+- conferir overflow antes de persistir.
 
-| Campo | SQLite atual | MySQL proposto | Nulo/default | Regra e finalidade |
-| --- | --- | --- | --- | --- |
-| `ID` | `INTEGER` | `INT UNSIGNED` PK AI | não | Identidade. |
-| `INVERTER_ID` | `INTEGER` | `INT UNSIGNED` FK | não | Pai; exclusão `CASCADE`. |
-| `SYSTEM_TYPE` | `TEXT` | `VARCHAR(100)` | não | Valor extensível, sem `CHECK` fechado. |
+Não se usa `UNIQUE(INVERTER_ID, BATTERY_INDEX, ACTIVE)`, pois impediria mais de um histórico inativo com o mesmo índice. A proposta usa índice não único `(INVERTER_ID, BATTERY_INDEX)` e valida unicidade/sobreposição apenas entre ativos dentro da transação e sob bloqueio/revisão do agregado. A igualdade do produto não substitui a interseção dos conjuntos.
 
-Índices em `INVERTER_ID` e `SYSTEM_TYPE`. Não se cria `ACTIVE`: adicionar/remover a relação representa a capacidade. Regras de domínio: on-grid implica saída CA; híbrido implica saída CA e pode ter entrada CA, EPS e bateria; off-grid implica EPS, pode ter bateria e não exige saída CA fictícia.
+## 7. `inverter_system`
 
-## 10. `inverter_communication`
+| Campo | Tipo proposto | Nulo/default | Regra |
+| --- | --- | --- | --- |
+| `ID` | `INT UNSIGNED` PK AI | não | Identidade. |
+| `INVERTER_ID` | `INT UNSIGNED` FK | não | Pai; exclusão integral em `CASCADE`. |
+| `SYSTEM_TYPE` | `VARCHAR(100)` | não | Vocabulário extensível; sem check fechado nesta tabela. |
 
-Meios/protocolos de comunicação do inversor.
+On-grid e híbrido requerem saída `AC_OUTPUT` para ficarem prontos; off-grid requer `EPS_OUTPUT`, sem saída CA fictícia. Entrada CA é permitida para híbridos; bateria/EPS aplicam-se a híbridos/off-grid. Desmarcar capacidade inativa dependentes na mesma transação e preserva dados; reativar não reativa filhos automaticamente.
 
-| Campo | SQLite atual | MySQL proposto | Nulo/default | Regra e finalidade |
-| --- | --- | --- | --- | --- |
-| `ID` | `INTEGER` | `INT UNSIGNED` PK AI | não | Identidade. |
-| `INVERTER_ID` | `INTEGER` | `INT UNSIGNED` FK | não | Pai; exclusão `CASCADE`. |
-| `COMMUNICATION_TYPE` | `TEXT` | `VARCHAR(100)` | não | Valor extensível, sem `CHECK` fechado. |
+## 8. `inverter_communication`
 
-Índices em `INVERTER_ID` e `COMMUNICATION_TYPE`. A nulabilidade e a política de exclusão divergentes do SQLite são normalizadas. Não se cria `ACTIVE`: a existência da linha declara suporte.
+| Campo | Tipo proposto | Nulo/default | Regra |
+| --- | --- | --- | --- |
+| `ID` | `INT UNSIGNED` PK AI | não | Identidade. |
+| `INVERTER_ID` | `INT UNSIGNED` FK | não | Pai; exclusão integral em `CASCADE`. |
+| `COMMUNICATION_TYPE` | `VARCHAR(100)` | não | Valor extensível, sem check fechado. |
 
-## 11. `inverter_output_mode`
+Índices em inversor e tipo. A existência da linha declara suporte; não precisa de `ACTIVE` próprio.
 
-Catálogo global editável de modos de saída, não mais associação direta entre inversor e texto.
+## 9. `inverter_output_mode`
 
-| Campo | SQLite atual | MySQL proposto | Nulo/default | Regra e finalidade |
-| --- | --- | --- | --- | --- |
-| `ID` | `INTEGER` | `INT UNSIGNED` PK AI | não | Identidade global. |
-| `OUTPUT_MODE` | `TEXT` | `VARCHAR(100)` | não | Nome do modo, extensível e editável. |
-| `ACTIVE` | — (novo) | `BOOLEAN` | não / `TRUE` | Disponibilidade para novos perfis sem invalidar referências antigas. |
+Catálogo global cadastrável, não associação direta com inversor.
 
-`INVERTER_ID` é removido. `inverter_ac_output.OUTPUT_MODE_ID` e `inverter_eps_output.OUTPUT_MODE_ID` referenciam o catálogo com exclusão `RESTRICT`. Índices em `OUTPUT_MODE` e `ACTIVE`. Não haverá enum/check fechado; a política de unicidade textual depende da canonicalização pendente.
+| Campo | Tipo proposto | Nulo/default | Regra |
+| --- | --- | --- | --- |
+| `ID` | `INT UNSIGNED` PK AI | não | Identidade global. |
+| `OUTPUT_MODE` | `VARCHAR(100)` | não | Nome extensível, com unicidade após normalização. |
+| `ACTIVE` | `BOOLEAN` | não / `TRUE` | Disponível para novos perfis; referências antigas permanecem. |
 
-## Integridade referencial proposta
+Perfis de saída referenciam o catálogo com exclusão `RESTRICT`. `AC_INPUT.OUTPUT_MODE_ID` deve ser `NULL`; o modelo não amplia silenciosamente “modo de saída” para entrada.
 
-| Relação | Ao excluir pai | Justificativa |
+## Dados mínimos por estado e operação
+
+Esta tabela separa o que o motor atual realmente consome de dados apenas descritivos. Regras novas não aprovadas são marcadas como proposta.
+
+| Situação | Mínimo obrigatório |
+| --- | --- |
+| Salvar rascunho de inversor | Identidade técnica do rascunho e `ROW_VERSION`; campos elétricos, grupos e padrão podem estar incompletos. **Proposta:** exigir modelo e fabricante apenas ao promover/salvar como item de catálogo, não em autosave temporário. |
+| Disponibilizar perfil de saída | Tipo de saída, inversor, `OUTPUT_MODE_ID`, potência nominal positiva, `ACTIVE=TRUE`; coerência da classificação. As duas referências de tensão e correntes são necessárias para filtros que as usem, mas não para a fórmula FV atual. |
+| Disponibilizar perfil `AC_INPUT` | Tipo, inversor e ao menos uma grandeza técnica que caracterize a entrada; `OUTPUT_MODE_ID=NULL`, `IS_DEFAULT=FALSE`. O conjunto mínimo exato é decisão de negócio. |
+| Calcular compatibilidade FV | Inversor; perfil de saída ativo escolhido/padrão com potência nominal positiva; sobrecarga cadastrada válida ou percentual de sessão; número de MPPTs/entradas; grupos MPPT válidos com entradas, faixas de tensão aplicáveis e limites de corrente necessários ao modo; módulo com `WP`, `VMPP`, `IMPP`, `VOC`, `ISC`, `COEF_VOC` e `COEF_ISC`; temperaturas/opções da sessão. `COEF_PMAX` é usado na tela principal para potência compensada, embora o motor de compatibilidade estruturado use potência nominal na potência DC exibida. |
+| Calcular ignorando corrente operacional | Mesmo conjunto, exceto que a ausência/limite de corrente operacional não bloqueia; curto-circuito, tensão, entradas, Full Load e sobrecarga continuam válidos. |
+| Usar na matriz | Todos os mínimos do cálculo, além de inversor, módulo e perfil ativos. |
+| Consultar/simular no principal | Equipamento pode estar inativo; dados necessários ao cálculo e perfil selecionado devem ser válidos. |
+
+Dimensões, massa, refrigeração, proteção, topologia, eficiências, classificações da célula, comunicação, tensão nominal MPPT e grandezas não usadas pela opção selecionada são descritivas ou de filtro; sua ausência não deve bloquear todo cálculo.
+
+## Contrato de seleção e cálculo
+
+O contexto futuro deve identificar ao menos `inverter_id`, `inverter_row_version`, `ac_profile_id`, `profile_type`, `output_mode_id`, as duas referências de tensão, `module_id`, opções/temperaturas e sobrecarga efetiva. O resultado guarda a mesma identidade. A fórmula recebe a potência nominal do perfil selecionado; não escolhe perfil, não soma CA/EPS e não usa pico como nominal.
+
+Filtros CA pertencem a uma única linha e ao tipo solicitado. O filtro fase–fase consulta apenas `RATED_LINE_TO_LINE_VOLTAGE`; o filtro fase–neutro consulta apenas `RATED_LINE_TO_NEUTRAL_VOLTAGE`. Limites são inclusivos e mínimo igual ao máximo representa igualdade. Potência, tensão e demais critérios combinados devem ser satisfeitos pelo mesmo perfil. Consultas 1:N retornam cada inversor uma vez (`EXISTS`, agregação adequada ou deduplicação por ID).
+
+## Banco versus aplicação
+
+O banco garante FKs, tipos, `PROFILE_TYPE`, categoria, booleanos, unicidades simples aprovadas, não negatividade física, relações mínimo/máximo locais e proteção referencial. A aplicação/serviço garante:
+
+- normalização textual antes da comparação;
+- completude por estado e compatibilidade entre sistema/perfis;
+- seleção e troca transacional do padrão;
+- coerência de MPPT/bateria, fatoração, cobertura e sobreposição;
+- revisão otimista do agregado e repetição segura após conflito;
+- inativação transacional de dependentes quando uma capacidade some;
+- preservação de inativos e ausência de reativação indiscriminada;
+- escolha explícita do perfil em cálculo, matriz e detalhes.
+
+Atualizações do agregado usam `ROW_VERSION` no `WHERE`; se nenhuma linha for afetada, a transação falha por conflito. Troca do padrão primeiro valida o substituto e, numa única transação, define o novo e remove/inativa o antigo, sem estado intermediário persistido.
+
+## Mapeamento futuro do SQLite
+
+| Origem | Destino | Tratamento aprovado |
 | --- | --- | --- |
-| fabricante → inversor/módulo | `RESTRICT` | Impede equipamento órfão e perda silenciosa de catálogo. |
-| inversor → MPPT, perfis, bateria, sistema e comunicação | `CASCADE` | São partes exclusivamente pertencentes ao equipamento. |
-| modo de saída → perfis CA/EPS | `RESTRICT` | Um modo referenciado não pode desaparecer; desativação preserva histórico. |
+| `inverter` sem cinco grandezas CA | `inverter` | Preservar identidade; converter somente sentinelas conhecidas por campo para `NULL`. |
+| potência/correntes CA de inversor com um modo | um `inverter_ac_profile` `AC_OUTPUT` | Copiar potência nominal/máxima e correntes nominal/máxima; manter proveniência. Não criar EPS/entrada/bateria. |
+| potência/correntes CA dos 56 inversores com dois modos | dois perfis `AC_OUTPUT` por inversor (112 no total) | Uma cópia por modo, com os mesmos valores legados inicialmente e revisão manual obrigatória; não duplicar inversor, MPPTs ou demais relações. |
+| `inverter.RATED_OUTPUT_VOLTAGE` | uma das duas tensões do perfil, após evidência | Não inferir pela razão, modo ou modelo. Preservar valor/origem na reconciliação se fase–fase versus fase–neutro for ambíguo; a outra referência fica `NULL`. |
+| `inverter_output_mode` legado | catálogo global + um `OUTPUT_MODE_ID` por perfil | Os 257 casos unívocos geram um perfil; os 56 casos confirmados geram dois, um por modo. Registrar `(inverter legado, modo) → perfil` para reexecução idempotente. |
+| `mppt.MAX_SHORT_CIRCUIT_CURRENT` / `MAX_OPERATING_CURRENT` | colunas `*_PER_MPPT` | Campos por string permanecem `NULL`. |
+| `MPPT_INDEX=0` | mesmo código | Preservar grupo homogêneo. |
+| relações de sistema/comunicação | tabelas homônimas | Preservar valores; remover somente checks de vocabulário solicitados. |
+| módulo | `module` | Preservar coeficientes com cinco casas; demais grandezas suportam duas no snapshot conferido. |
 
-IDs são imutáveis; `ON UPDATE RESTRICT`/`NO ACTION` é suficiente. Operações destrutivas continuam passando pelo serviço, com transação e auditoria da futura aplicação.
+Não existem inversores **exclusivamente** off-grid no legado: as 21 relações `OFF-GRID` pertencem a equipamentos também classificados como híbridos e on-grid. Conforme a decisão de negócio fornecida, os cinco campos CA atuais, inclusive nesses híbridos, são saída CA principal. Todos os 313 inversores possuem modo atualmente; os 56 multimodo recebem dois perfis autorizados, mas permanecem em revisão até o usuário escolher exatamente um padrão e conferir tensões/potências/correntes por configuração.
 
-## Validação: banco versus aplicação
+Para os 56 casos, não copiar `IS_DEFAULT=TRUE` para ambos e não escolher por ordem, ID ou potência. Os dois perfis são reconciliados como rascunhos; a promoção para uso exige seleção explícita de um único padrão. Não gerar opções de 480 V nem outras combinações por fabricante/modelo: configurações adicionais só entram com fonte confirmada.
 
-O banco deve garantir tipos, FKs, booleanos, categoria de fabricante, não negatividade de grandezas que fisicamente não podem ser negativas, faixas percentuais inequívocas e relações mínimo/máximo dentro da mesma linha. Vocabulários sujeitos a evolução não recebem `CHECK` fechado.
+## Contrato de apresentação
 
-A aplicação deve garantir:
+Identidades persistidas permanecem estáveis; os rótulos são compartilhados por cadastros, filtros, detalhes e interfaces desktop/web:
 
-- campos mínimos antes de ativar equipamentos e perfis;
-- compatibilidade entre `SYSTEM_TYPE` e perfis existentes;
-- coerência dos totais agregados do inversor com grupos MPPT;
-- validade e não sobreposição da codificação `MPPT_INDEX`;
-- seleção de um único perfil elétrico coerente por cálculo/busca;
-- prevenção de duplicatas conforme a futura canonicalização;
-- concorrência otimista com `ROW_VERSION`;
-- interpretação explícita de unidades e conversão de sentinelas na migração.
+| Identidade persistida | Rótulo aprovado |
+| --- | --- |
+| `ON-GRID` | On grid |
+| `OFF-GRID` | Off grid |
+| `GRIDZERO` | Grid zero |
+| `HYBRID` | Híbrido |
+| `SPLIT PHASE` | Splitphase |
+| `THREE_PHASE_FOUR_WIRE` | Trifásico a quatro fios |
+| `THREE_PHASE_THREE_WIRE` | Trifásico a três fios |
+| `SINGLE_PHASE` | Monofásico |
 
-## Mapeamento da migração futura
+`SPLIT PHASE` já existe como identidade futura prevista no código; não se cria `SPLIT_PHASE` nesta etapa. Alterar rótulo não habilita funcionalidade. Comunicações e rótulos não solicitados permanecem como estão; não se implanta infraestrutura ampla de internacionalização nesta revisão.
 
-| Origem SQLite | Destino proposto | Tratamento |
-| --- | --- | --- |
-| `inverter` exceto cinco campos CA | `inverter` | `-1` técnico vira `NULL`; preservar IDs se a estratégia permitir. |
-| cinco campos CA de `inverter` | `inverter_ac_output` **ou** `inverter_eps_output` | Classificar pelo sistema e datasheet; não copiar cegamente para ambos. |
-| `inverter_output_mode` por inversor | catálogo `inverter_output_mode` + FKs de perfis | Deduplicar/canonicalizar modos e associar cada perfil correto. |
-| `mppt.MAX_*CURRENT` | colunas `*_PER_MPPT` | Preservar como corrente agregada; campos por string ficam `NULL` até fonte explícita. |
-| `MPPT_INDEX=0` | `MPPT_INDEX=0` | Preservar significado de grupo homogêneo. |
-| demais `-1` e ausência técnica | `NULL` | Zero não substitui desconhecido. |
-| sistemas e comunicações | tabelas homônimas | Remover checks fechados sem inventar capacidades. |
-| classificações de módulo | `VARCHAR` extensível | Preservar texto existente; normalização posterior controlada. |
+## Decisões aprovadas incorporadas
 
-O inversor off-grid não deve ganhar saída CA on-grid artificial. Para híbridos, os cinco campos legados só podem ser classificados após identificar se a ficha se refere à saída CA, EPS ou a ambas com valores coincidentes.
+- Nove tabelas de domínio e perfil CA unificado.
+- Tipos de perfil fechados e textuais: `AC_OUTPUT`, `AC_INPUT`, `EPS_OUTPUT`.
+- Perfil padrão explícito, único e transacional; escolha de sessão não altera cadastro.
+- Potência nominal, máxima e pico separadas.
+- `ACTIVE` como disponibilidade, distinta de completude.
+- Principal admite equipamento inativo válido; matriz exige ativo; perfil inativo nunca é calculável.
+- Bateria agrupada por produto de primos, `0` homogêneo, com total físico no inversor.
+- `NULL` para ausência, duas casas por padrão e cinco para coeficientes térmicos.
+- Unicidade de fabricante+modelo e inversor+índice MPPT condicionada à conferência, agora sem conflitos encontrados.
+- Modos de saída como catálogo global extensível.
+- Cinco campos CA legados migram somente para perfis `AC_OUTPUT`; casos unívocos podem receber o padrão, enquanto os duplicados aguardam escolha explícita.
+- Os 56 inversores com dois modos geram 112 perfis `AC_OUTPUT`, sujeitos a revisão e escolha de um único padrão por inversor.
+- Tensões nominais são explicitamente fase–fase e fase–neutro; não há tensão genérica nem derivação automática.
+- Rótulos aprovados são separados das identidades persistidas.
 
-## Impacto esperado no código
+## Ambiguidades de negócio restantes
 
-- Repositórios deixam de montar SQL SQLite diretamente e passam a carregar agregados com perfis explícitos.
-- O motor de compatibilidade continua recebendo grandezas, mas a potência nominal deve vir do perfil escolhido; a fórmula não decide qual perfil usar.
-- Busca por saída/entrada/EPS precisa aplicar todos os critérios à mesma linha de perfil.
-- Cadastro passa a editar listas de perfis e o catálogo global de modos de saída.
-- DTOs precisam distinguir corrente por MPPT e por string e impedir conversões implícitas.
-- Ferramentas da matriz precisam manter explícito qual perfil fornece a potência nominal usada.
-- A futura camada MySQL deve substituir `?`, `PRAGMA`, `COLLATE NOCASE` e `sqlite3.Row` sem espalhar detalhes do driver pelo domínio.
+1. Qual conjunto mínimo torna um perfil `AC_INPUT` disponível, já que ele não participa do cálculo FV atual? **Proposta:** exigir ao menos tensão nominal em uma referência ou corrente/potência nominal, além de tipo, inversor, atividade e `IS_DEFAULT=FALSE`; validar o conjunto exato antes do DDL.
+2. Nomes idênticos de fabricantes após normalização devem ser proibidos globalmente ou diferenciados por alguma identidade externa? **Proposta:** unicidade global do nome normalizado, com fluxo explícito de mesclagem/renomeação para exceções.
 
-## Decisões fechadas nesta etapa
+Revisões de dados ainda necessárias: escolher o padrão dos 56 pares duplicados e classificar a tensão legada como fase–fase ou fase–neutro com evidência. Corrente total compartilhada de bateria continua uma extensão hipotética: nenhum caso concreto foi demonstrado; não se adiciona coluna sem fonte. A versão real do MySQL e a solução física para unicidade condicional do padrão são validações técnicas posteriores, não decisões de negócio reabertas.
 
-- MySQL com InnoDB e `utf8mb4` como destino proposto.
-- `battery` é `inverter_battery`; `BATTERY_INDEX` identifica a interface física, mas não é único por inversor.
-- Saída CA, entrada CA e saída EPS são perfis separados; potência EPS contínua não se confunde com pico.
-- A existência de perfis expressa suporte; não haverá flags ou ponte redundante.
-- `inverter_output_mode` torna-se catálogo global editável, referenciado por perfis CA e EPS.
-- Dados desconhecidos usam `NULL`; zero e `MPPT_INDEX=0` mantêm significados reais próprios.
-- Correntes por MPPT e por string são independentes e jamais derivadas por divisão.
-- Cada filtro/cálculo usa uma única linha de perfil coerente.
-
-## Decisões ainda necessárias antes do DDL
-
-1. Definir canonicalização, collation e regra de unicidade para fabricantes, modelos, modos de saída, sistemas e comunicações, inclusive tratamento de maiúsculas, acentos e espaços.
-2. Classificar manualmente os cinco campos CA legados de inversores híbridos e off-grid durante a migração; o schema atual não informa a qual interface pertencem.
-3. Confirmar, em amostra ampla de datasheets, as precisões `DECIMAL`, comprimentos de texto e limites máximos propostos.
-4. Definir a identidade visual/descrição que diferencia várias configurações de bateria com o mesmo `BATTERY_INDEX`, além de como impedir duplicatas realmente idênticas.
-5. Fechar os campos mínimos para ativação de cada perfil e o comportamento quando um tipo de sistema é removido, sem apagar dados técnicos inadvertidamente.
-6. Validar se `(INVERTER_ID, MPPT_INDEX)` pode ser único após revisar todos os padrões heterogêneos e o fluxo de edição.
-7. Definir como escolher o perfil CA nominal usado pelo motor quando um inversor tiver múltiplos perfis igualmente ativos; não é aceitável escolher pela primeira linha retornada.
-
-Somente depois dessas decisões e da revisão humana deste dicionário deve ser escrita a primeira migração/DDL da Etapa 03.
+Após revisão dessas ambiguidades, o próximo marco é preparar DDL e plano de migração em ambiente de teste. Esta etapa não os executa.

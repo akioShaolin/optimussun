@@ -16,7 +16,7 @@ Stack proposta, sujeita à verificação de ambiente: Tkinter/ttk e Matplotlib n
 | --- | --- |
 | 00 | Diagnóstico local, snapshot SQLite, baseline e decisões pendentes. Sem refatoração ou DDL. |
 | 01 | Medir e corrigir fluidez/progresso da matriz ainda no adaptador atual; preservar resultados e CSV. |
-| 02 | Fechar decisões, dicionário e contratos; esquema/migrações MySQL validados em banco de teste. |
+| 02 | Fechar decisões, dicionário, contratos e conferências somente leitura do legado. Sem DDL ou migração nesta consolidação. |
 | 03 | Importador SQLite → MySQL, simulação padrão, ensaio e reconciliação sem corte operacional. |
 | 04 | Núcleo único de cálculos, contexto de saída explícito e regressão de resultados. |
 | 05 | API, filas limitadas, controle de acesso de escrita e OS-Web-Server. |
@@ -25,23 +25,24 @@ Stack proposta, sujeita à verificação de ambiente: Tkinter/ttk e Matplotlib n
 | 08 | Web com paridade funcional com o principal e isolamento por usuário. |
 | 09 | Quatro executáveis, homologação separada e preparação da release; publicação não automática. |
 
-As etapas 00–01 não requerem MySQL. A etapa 02 pode produzir contratos e DDL sem conexão, mas sua validação exige um MySQL descartável ou de homologação. A etapa 03 exige tal destino para o ensaio. Conferir versão real do MySQL; não presumir equivalência com MariaDB.
+As etapas 00–01 não requerem MySQL. A consolidação documental da etapa 02 também não acessa MySQL nem produz DDL. O próximo marco pode preparar o DDL, mas sua validação exige um MySQL descartável ou de homologação; a etapa 03 exige tal destino para o ensaio. Conferir a versão real do MySQL e não presumir equivalência com MariaDB.
 
 ## Contratos e regras a decidir antes do esquema
 
-- Saída elétrica é um perfil identificado por **tipo e ID**, não apenas por ID. O cálculo deve explicitar inversor, perfil, módulo, opções e revisão de dados. Perfis alternativos não são somados nem escolhidos pelo maior valor. Entrada CA e pico EPS não substituem potência nominal de saída.
+- Saída/entrada elétrica usa a tabela unificada `inverter_ac_profile`, identificada por **tipo e ID**. Os tipos controlados são `AC_OUTPUT`, `AC_INPUT` e `EPS_OUTPUT`. O cálculo explicita inversor, perfil, módulo, opções e revisão de dados. Perfis alternativos não são somados nem escolhidos pelo maior valor; `IS_DEFAULT` seleciona explicitamente o perfil inicial de saída.
+- Cada perfil distingue tensão nominal fase–fase e fase–neutro. Filtros, detalhes e resultados identificam a referência usada; não se deriva uma da outra nem se mistura potência/tensão de perfis diferentes.
 - Inversores on-grid usam saída CA aplicável; exclusivamente off-grid usam EPS, sem saída de rede fictícia; híbridos podem ter CA, entrada CA, EPS e bateria conforme flags. Mudanças de flags inativam dependentes que perderam elegibilidade na mesma transação, preservando registros. Reativação de flag não reativa automaticamente filhos.
 - Preservar inicialmente a semântica de `MPPT_INDEX`, inclusive `0` homogêneo; auditar limites do produto de primos. `MAX_OPERATING_CURRENT` legado passa a significar corrente por MPPT. Corrente por string nova permanece desconhecida sem fonte, nunca deduzida por divisão.
 - Proposta para dados técnicos desconhecidos: `NULL` na v3, com exigências diferentes para rascunho e ativação/cálculo. Definir conversão por campo; não substituir genericamente `-1`, pois temperatura e coeficiente podem ser negativos válidos. Sobrecarga fica em percentual adicional (`50` = 50%); eficiências também em percentual, mas não são fator novo de cálculo FV.
-- `BATTERY_INDEX` proposto como índice de porta física começando em `0`, sem produto de primos. Decidir alternativas por porta e unicidade antes do DDL. A tabela descreve especificações/portas aceitas, não estoque, autonomia ou comunicação BMS implementada.
+- `BATTERY_INDEX` usa produto dos primos das posições físicas, como `MPPT_INDEX`; `0` representa grupo homogêneo e `1` é inválido. `inverter.NUMBER_OF_BATTERY_INPUTS` registra o total físico. A tabela descreve grupos de entradas e especificações compartilhadas, não estoque, autonomia ou quantidade gerenciada externamente pelo BMS.
 - Perfil ativo e equipamento ativo são conceitos distintos. O principal pode consultar/simular equipamento de catálogo inativo com perfil habilitado e dados suficientes; a matriz oferece apenas equipamentos/perfis ativos.
 - Definir versão/revisão otimista do agregado do inversor, transações para pais/filhos e autorização de escrita na API. Credenciais MySQL ficam somente no servidor, fora do código, clientes e logs. Estado de filtros, seleções e jobs deve ser isolado por requisição/usuário.
 
-O dicionário final da etapa 02 deve cobrir `manufacturer`, `inverter`, `mppt`, `module`, `inverter_system`, `inverter_communication`, `inverter_output_mode`, `inverter_ac_output`, `inverter_ac_input`, `inverter_eps_output` e `battery`. Usar InnoDB, `utf8mb4`, tipos/precisão documentados, FKs/índices conferidos e migrações versionadas; apresentar alternativas de negócio antes de aplicar DDL real. Preservar IDs legados e mapear IDs novos das saídas.
+O dicionário consolidado cobre nove tabelas de domínio: `manufacturer`, `inverter`, `mppt`, `module`, `inverter_ac_profile`, `inverter_battery`, `inverter_system`, `inverter_communication` e `inverter_output_mode`. Usar InnoDB, `utf8mb4`, tipos/precisão documentados e FKs/índices conferidos. DDL e migrations versionadas pertencem ao marco seguinte, após revisão das ambiguidades restantes. Preservar IDs legados e mapear IDs novos dos perfis.
 
 ## Migração e homologação
 
-Importar de snapshot consistente, com inventário e simulação antes de escrita. Não inventar eficiência, bateria, EPS, entrada CA ou corrente por string. Transferir as cinco grandezas CA legadas para perfil de saída somente quando a classificação for inequívoca; máximo contínuo não vira pico EPS por renomeação. Relatar por registro lidos, importados, pendentes e motivos; reconhecer repetição do mesmo snapshot sem duplicar dados. Não usar `REPLACE`, `INSERT IGNORE`, FKs desligadas ou substituição textual de SQL para esconder conflitos. Separar DDL de importação; DDL MySQL pode causar commit implícito.
+Importar de snapshot consistente, com inventário e simulação antes de escrita. Não inventar eficiência, bateria, EPS, entrada CA, corrente por string ou opções de tensão. As cinco grandezas CA legadas representam saída CA principal. Os 257 inversores com um modo geram um perfil `AC_OUTPUT`; os 56 com dois modos confirmados geram dois perfis cada, copiando inicialmente potência/correntes e registrando proveniência para revisão. Somente um perfil poderá ser padrão, escolhido explicitamente. `RATED_OUTPUT_VOLTAGE` só entra em fase–fase ou fase–neutro com evidência; se ambíguo, permanece pendente no relatório. Registrar `(ID legado, modo) → perfil` para reexecução idempotente. Relatar registros lidos, importados, pendentes e motivos; não usar `REPLACE`, `INSERT IGNORE`, FKs desligadas ou substituição textual para esconder conflitos. Separar DDL de importação; DDL MySQL pode causar commit implícito.
 
 Homologar em ambiente separado com MySQL real, servidor e dois clientes simultâneos, navegador em outro computador, perfis de saída alternativos, falha/reconexão, conflitos de edição, cálculos equivalentes e matrizes grandes. A migração operacional final exige interrupção de escrita no legado, novo snapshot, backup do destino, reconciliação e decisão do usuário. O backup de ensaio não substitui o snapshot final. Não prometer rollback sem perdas após novas escritas na v3.
 

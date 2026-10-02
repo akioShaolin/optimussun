@@ -1,12 +1,12 @@
 # Status — Optimus Sun v3
 
-Última atualização: 01/10/2026. Branch de trabalho: `feature/v3.0.0`. Última versão publicada: **v2.6.0**. A v3 ainda não é uma release e nenhum banco foi migrado.
+Última atualização: 02/10/2026. Branch de trabalho: `feature/v3.0.0`. Última versão publicada: **v2.6.0**. A v3 ainda não é uma release e nenhum banco foi migrado.
 
 | Etapa | Estado | Evidência / próxima condição |
 | --- | --- | --- |
 | 00 — diagnóstico e base | Concluída | [Diagnóstico local](DIAGNOSTICO.md), snapshot SQLite íntegro, baseline de 100 testes seguros. |
 | 01 — fluidez da matriz | Concluída e validada manualmente | [Medições antes/depois](ETAPA_01_MEDICOES.md), canvas virtual, barra por pares reais, cancelamento/fechamento testados e matriz 65×35 aprovada pelo usuário. |
-| 02 — inventário e proposta de schema | Documentação concluída; revisão humana pendente | [Schema SQLite atual](ETAPA_02_SCHEMA_ATUAL.md) e [dicionário v3 proposto](ETAPA_02_DICIONARIO_DADOS.md). Nenhum DDL foi aplicado. |
+| 02 — inventário e proposta de schema | Consolidada e revisada pelo 02B; revisão de dados/duas decisões pendentes | [Dicionário consolidado](ETAPA_02_DICIONARIO_DADOS.md), [conferências](ETAPA_02_CONFERENCIAS.md), [handoff](ETAPA_02_CONSOLIDACAO_2026-10-02.md) e [complemento 02B](ETAPA_02B_PERFIS_TENSOES_ROTULOS_2026-10-02.md). Nenhum DDL foi aplicado. |
 | 03–09 | Não iniciadas | Dependem da aprovação das decisões remanescentes da Etapa 02. |
 
 ## Escopo da etapa 00
@@ -24,7 +24,9 @@
 
 ## Pendências e decisões
 
-As decisões estruturais de perfis, `NULL`/sentinelas, catálogo global de modos, corrente por MPPT/string e significado de `BATTERY_INDEX` foram incorporadas ao [dicionário da Etapa 02](ETAPA_02_DICIONARIO_DADOS.md). Permanecem sete decisões objetivas antes do DDL: canonicalização/unicidade textual, classificação dos campos CA legados, precisão final, distinção de configurações de bateria, regras de ativação de perfis, unicidade de grupos MPPT e escolha do perfil nominal para o motor. Não congelar nem aplicar o DDL enquanto elas estiverem abertas.
+As decisões estruturais de perfil CA unificado, padrão explícito, atividade, `NULL`/sentinelas, catálogo global de modos, corrente por MPPT/string, grupos de bateria e destino dos campos CA legados foram incorporadas ao [dicionário](ETAPA_02_DICIONARIO_DADOS.md). O 02B resolveu os modos: não há mais inversor sem modo, e os 56 multimodo gerarão 112 perfis `AC_OUTPUT`. Também separou tensões fase–fase/fase–neutro e fechou os rótulos. Restam duas decisões de negócio: mínimo de disponibilidade de `AC_INPUT` e política para fabricantes homônimos. Corrente total compartilhada de bateria continua hipótese sem caso concreto, não campo aprovado. A versão do MySQL e a unicidade condicional do padrão são validações técnicas posteriores.
+
+Continuam acompanhadas, sem alteração nesta etapa, duas pendências da Etapa 01: a diferença percebida entre **Calcular** e **Recalcular** e o comportamento da rolagem vertical sobre tabela/barra vertical e horizontal sobre barra horizontal.
 
 ## Etapa 01 — fluidez e progresso
 
@@ -41,10 +43,13 @@ As decisões estruturais de perfis, `NULL`/sentinelas, catálogo global de modos
 
 - O banco `src/optimus_sun.db` foi lido em modo somente leitura: 7 tabelas, 7 índices explícitos, nenhuma view/trigger, integridade `ok` e nenhuma violação de FK.
 - O inventário registra DDL, tipos, defaults, checks, FKs, índices, contagens, sentinelas e uso real no código, sem misturar estado atual com proposta futura.
-- O dicionário propõe 11 tabelas: fabricante, inversor, MPPT, módulo, três perfis CA/EPS, bateria, sistema, comunicação e catálogo global de modos de saída.
-- A proposta separa perfis elétricos coerentes, mantém `MPPT_INDEX=0`, distingue correntes por MPPT/string e converte ausência técnica para `NULL`.
+- O dicionário consolidado propõe nove tabelas e unifica saída CA, entrada CA e EPS em `inverter_ac_profile`, com tipo controlado e perfil padrão explícito.
+- A proposta preserva perfis elétricos coerentes, mantém `MPPT_INDEX=0`, adota agrupamento equivalente para bateria, distingue correntes por MPPT/string e converte ausência técnica para `NULL`.
+- A primeira releitura de 02/10 encontrou 3 inversores sem modo e 56 com dois; após ajustes do usuário, nova leitura confirmou 257 com um modo, 56 com dois e nenhum sem modo.
+- Os 56 multimodo terão dois perfis `AC_OUTPUT` cada, com revisão manual e escolha de um único padrão. A tensão legada será classificada como fase–fase ou fase–neutro somente com evidência.
+- Somente coeficientes térmicos exigem mais de duas casas entre os campos inspecionados; foram propostos cinco decimais para preservá-los.
 - Não houve acesso a MySQL, criação de DDL, migração, alteração do SQLite ou mudança funcional nesta etapa.
 
 ## Próximo marco
 
-Revisar o dicionário e fechar suas sete decisões remanescentes. Somente com aprovação explícita iniciar a etapa seguinte para DDL/migração e validação em MySQL; não executá-la automaticamente.
+Revisar os dados duplicados/tensões e decidir o mínimo de `AC_INPUT` e a política de fabricantes homônimos. Depois, confirmar a versão do MySQL e preparar/validar DDL e migração em ambiente de teste; não executar a etapa seguinte automaticamente.
