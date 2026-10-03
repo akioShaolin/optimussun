@@ -8,7 +8,7 @@ Quatro programas Windows: Optimus Sun (principal), OS-Cadastros, OS-Matriz de Co
 
 Arquitetura proposta: os três clientes desktop e a interface web falam com uma API central na VM; **somente o servidor acessa o MySQL**. O núcleo de cálculos e as regras de cadastro são Python compartilhado, separado de Tkinter, HTTP e SQL. Os clientes v3 dependem do servidor ligado; não se presume modo offline. A paridade web obrigatória é com a aplicação principal, não com cadastros e matriz completos.
 
-Stack proposta, sujeita à verificação de ambiente: Tkinter/ttk e Matplotlib no desktop; FastAPI/Uvicorn no servidor; SQLAlchemy 2, driver MySQL e migrações versionadas; web com recursos locais, sem dependência operacional de CDN. Não introduzir Node, Redis, Docker ou outros componentes sem necessidade demonstrada.
+Stack proposta, sujeita à verificação de ambiente: Tkinter/ttk e Matplotlib no desktop; FastAPI/Uvicorn no servidor; SQLAlchemy 2 para a aplicação futura, driver MySQL e migrações versionadas; web com recursos locais, sem dependência operacional de CDN. O importador administrativo da Etapa 03 usa PyMySQL diretamente e concentra todo SQL em um DDL versionado e num único adaptador; isso não antecipa a camada ORM/API das etapas seguintes.
 
 ## Ordem e marcos
 
@@ -38,7 +38,7 @@ As etapas 00–01 não requerem MySQL. A consolidação documental da etapa 02 t
 - Perfil ativo e equipamento ativo são conceitos distintos. O principal pode consultar/simular equipamento de catálogo inativo com perfil habilitado e dados suficientes; a matriz oferece apenas equipamentos/perfis ativos.
 - Definir versão/revisão otimista do agregado do inversor, transações para pais/filhos e autorização de escrita na API. Credenciais MySQL ficam somente no servidor, fora do código, clientes e logs. Estado de filtros, seleções e jobs deve ser isolado por requisição/usuário.
 
-O dicionário consolidado cobre nove tabelas de domínio: `manufacturer`, `inverter`, `mppt`, `module`, `inverter_ac_profile`, `inverter_battery`, `inverter_system`, `inverter_communication` e `inverter_output_mode`. Usar InnoDB, `utf8mb4`, tipos/precisão documentados e FKs/índices conferidos. DDL e migrations versionadas pertencem ao marco seguinte, após revisão das ambiguidades restantes. Preservar IDs legados e mapear IDs novos dos perfis.
+O dicionário consolidado cobre nove tabelas de domínio: `manufacturer`, `inverter`, `mppt`, `module`, `inverter_ac_profile`, `inverter_battery`, `inverter_system`, `inverter_communication` e `inverter_output_mode`. O DDL 0001 usa InnoDB, `utf8mb4`, tipos/precisão documentados, FKs/índices, unicidade textual normalizada e padrão condicional. Preservar IDs legados e mapear IDs novos dos perfis.
 
 ## Migração e homologação
 
@@ -49,3 +49,7 @@ Homologar em ambiente separado com MySQL real, servidor e dois clientes simultâ
 ## Regras de execução
 
 Preservar `src/optimus_sun.db` e trabalho pendente. Não alterar firewall, serviços da VM ou banco operacional por iniciativa própria. Não fazer commit, push, merge, tag ou release sem pedido explícito. Documentar evidência executada separadamente de implementação e de validação manual pendente. Atualizar `STATUS.md` a cada etapa e parar após a entrega solicitada.
+
+## Estado da Etapa 03
+
+DDL, importador, simulação, reconciliação e configuração segura foram implementados. O schema isolado foi criado e validado no MySQL 8.0.46; os 11 testes reais de integração e a reaplicação idempotente do DDL passaram. A simulação encontrou dez ocorrências: três índices MPPT fora do total declarado, dois totais de entradas divergentes, três valores `-4` não reconhecidos como sentinela, uma faixa Full Load invertida e um perfil de saída ativo sem classificação de sistema. O preflight recusou a carga antes de qualquer inserção e a migração dos dados permanece bloqueada até correção explícita. Ver [guia](ETAPA_03_GUIA.md) e [relatório](ETAPA_03_RELATORIO.md).

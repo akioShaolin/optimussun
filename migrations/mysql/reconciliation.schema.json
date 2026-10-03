@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://optimus-sun.local/schemas/migration-reconciliation-v1.json",
+  "title": "Optimus Sun v3 migration reconciliation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "profiles"],
+  "properties": {
+    "version": { "const": 1 },
+    "profiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["inverter_id", "output_mode", "source"],
+        "properties": {
+          "inverter_id": { "type": "integer", "minimum": 1 },
+          "output_mode": { "type": "string", "minLength": 1 },
+          "active": { "type": "boolean" },
+          "is_default": { "type": "boolean" },
+          "voltage_reference": {
+            "enum": ["LINE_TO_LINE", "LINE_TO_NEUTRAL", "UNRESOLVED"]
+          },
+          "source": { "type": "string", "minLength": 1 },
+          "corrections": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "RATED_ACTIVE_POWER": { "type": ["number", "string"] },
+              "MAX_ACTIVE_POWER": { "type": ["number", "string"] },
+              "RATED_CURRENT": { "type": ["number", "string"] },
+              "MAX_CURRENT": { "type": ["number", "string"] },
+              "RATED_LINE_TO_LINE_VOLTAGE": { "type": ["number", "string"] },
+              "RATED_LINE_TO_NEUTRAL_VOLTAGE": { "type": ["number", "string"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}

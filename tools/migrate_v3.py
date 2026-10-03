@@ -1,0 +1,13 @@
+"""Entry point executável a partir da raiz do projeto."""
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from migration_v3.cli import main
+
+raise SystemExit(main())
+

@@ -1,13 +1,14 @@
 # Status — Optimus Sun v3
 
-Última atualização: 02/10/2026. Branch de trabalho: `feature/v3.0.0`. Última versão publicada: **v2.6.0**. A v3 ainda não é uma release e nenhum banco foi migrado.
+Última atualização: 03/10/2026. Branch de trabalho: `feature/v3.0.0`. Última versão publicada: **v2.6.0**. A v3 ainda não é uma release e não houve corte operacional.
 
 | Etapa | Estado | Evidência / próxima condição |
 | --- | --- | --- |
 | 00 — diagnóstico e base | Concluída | [Diagnóstico local](DIAGNOSTICO.md), snapshot SQLite íntegro, baseline de 100 testes seguros. |
 | 01 — fluidez da matriz | Concluída e validada manualmente | [Medições antes/depois](ETAPA_01_MEDICOES.md), canvas virtual, barra por pares reais, cancelamento/fechamento testados e matriz 65×35 aprovada pelo usuário. |
-| 02 — inventário e proposta de schema | Consolidada e revisada pelo 02B; revisão de dados/duas decisões pendentes | [Dicionário consolidado](ETAPA_02_DICIONARIO_DADOS.md), [conferências](ETAPA_02_CONFERENCIAS.md), [handoff](ETAPA_02_CONSOLIDACAO_2026-10-02.md) e [complemento 02B](ETAPA_02B_PERFIS_TENSOES_ROTULOS_2026-10-02.md). Nenhum DDL foi aplicado. |
-| 03–09 | Não iniciadas | Dependem da aprovação das decisões remanescentes da Etapa 02. |
+| 02 — inventário e proposta de schema | Consolidada e revisada pelo 02B; duas decisões fechadas na Etapa 03 | [Dicionário consolidado](ETAPA_02_DICIONARIO_DADOS.md), [conferências](ETAPA_02_CONFERENCIAS.md), [handoff](ETAPA_02_CONSOLIDACAO_2026-10-02.md) e [complemento 02B](ETAPA_02B_PERFIS_TENSOES_ROTULOS_2026-10-02.md). Revisões de dados continuam rastreadas. |
+| 03 — esquema e importador | DDL e integração MySQL validados; migração de dados bloqueada | [Guia](ETAPA_03_GUIA.md) e [relatório](ETAPA_03_RELATORIO.md). O schema isolado foi validado; faltam correção/decisão sobre dez ocorrências estruturais antes da carga. |
+| 04–09 | Não iniciadas | Não avançar antes de concluir e revisar o ensaio da Etapa 03. |
 
 ## Escopo da etapa 00
 
@@ -20,11 +21,11 @@
 
 - Snapshot: `integrity_check=ok`; `foreign_key_check` vazio; SHA-256 `317889cd875a5d2e8754206d57250930a0c0e05f147f12989c9ca85f3116dee8`.
 - Baseline segura, sem testes que consultam diretamente o banco real: 100 testes aprovados. Mensagens de callbacks Tk após destruição apareceram no terminal sem falha; investigar isoladamente quando relevante.
-- MySQL/VM indisponível nesta máquina e **não necessário** para o inventário/proposta documental da etapa 02. Versão/configuração, DDL e testes reais de MySQL pertencem à etapa seguinte, depois da revisão humana.
+- Durante a Etapa 02, o MySQL não foi acessado e não era necessário para o inventário/proposta documental. Versão/configuração, DDL e testes reais ficaram para a etapa seguinte, depois da revisão humana.
 
 ## Pendências e decisões
 
-As decisões estruturais de perfil CA unificado, padrão explícito, atividade, `NULL`/sentinelas, catálogo global de modos, corrente por MPPT/string, grupos de bateria e destino dos campos CA legados foram incorporadas ao [dicionário](ETAPA_02_DICIONARIO_DADOS.md). O 02B resolveu os modos: não há mais inversor sem modo, e os 56 multimodo gerarão 112 perfis `AC_OUTPUT`. Também separou tensões fase–fase/fase–neutro e fechou os rótulos. Restam duas decisões de negócio: mínimo de disponibilidade de `AC_INPUT` e política para fabricantes homônimos. Corrente total compartilhada de bateria continua hipótese sem caso concreto, não campo aprovado. A versão do MySQL e a unicidade condicional do padrão são validações técnicas posteriores.
+As duas decisões restantes foram aprovadas na Etapa 03: `AC_INPUT` ativo exige híbrido e ao menos uma grandeza nominal positiva; fabricante tem nome normalizado globalmente único. O DDL materializa normalização e padrão condicional. A validação física no MySQL real foi concluída. Permanecem as revisões de dados — padrão/tensões dos pares, inconsistências MPPT e classificação de sistema ausente.
 
 Continuam acompanhadas, sem alteração nesta etapa, duas pendências da Etapa 01: a diferença percebida entre **Calcular** e **Recalcular** e o comportamento da rolagem vertical sobre tabela/barra vertical e horizontal sobre barra horizontal.
 
@@ -50,6 +51,16 @@ Continuam acompanhadas, sem alteração nesta etapa, duas pendências da Etapa 0
 - Somente coeficientes térmicos exigem mais de duas casas entre os campos inspecionados; foram propostos cinco decimais para preservá-los.
 - Não houve acesso a MySQL, criação de DDL, migração, alteração do SQLite ou mudança funcional nesta etapa.
 
+## Etapa 03 — esquema, importador e ensaio
+
+- Criados DDL 0001, importador por snapshot, simulação padrão, reconciliação estruturada, carga transacional, verificação e configuração `.env` segura.
+- Simulação leu 28 fabricantes, 313 inversores, 418 módulos, 317 MPPTs e produziu 369 perfis; hash operacional permaneceu `f467e8a234bca437ef7de807a4ca64d487ef842cfdcb9cac9185804df3b29188`.
+- Três grupos dos inversores 203/227 codificam posições além do total de MPPTs; 267/268 têm total ponderado divergente; 280/282 contêm três valores `-4` não reconhecidos como sentinela; 260 possui faixa Full Load invertida; e o perfil 275 do inversor 235 está ativo sem classificação de sistema. As dez ocorrências bloqueiam a carga. Pendências de tensão/multimodo continuam rastreadas sem descarte.
+- Dos 257 perfis inicialmente ativos/padrão, 256 atendem às regras completas de prontidão. Foram aprovados 50 testes de migração/configuração e 11 de 11 testes de integração MySQL. A regressão segura final com integração habilitada resultou em 141 aprovados, 23 ignorados por indisponibilidade de Tk/Tcl e 25 subtestes; nenhum teste MySQL ficou ignorado.
+- A validação autenticada confirmou MySQL 8.0.46 Community, `utf8mb4_0900_ai_ci`, modo estrito, página InnoDB de 16.384 bytes e row format `dynamic`. O schema isolado `optimus_sun_v3_test` foi criado com DDL SHA-256 `1afdfc9a2ac1aed3fbe9fe07ac99bbf443bcf2bf1dcef36f62eb47a2f60a3654` e estrutura física SHA-256 `91fd7725007ead0c410d3ec0cbfd4f770734954aa3922dacdf5fb987bd00e89e`.
+- A reaplicação do DDL foi reconhecida de forma idempotente, com as mesmas assinaturas. A tentativa de carregar o plano com dez erros foi recusada antes de qualquer `INSERT`. As nove tabelas de domínio e as três tabelas de metadados da migração permaneceram vazias; `schema_version` registra somente `0001`. Portanto, o DDL e as proteções foram validados, mas a migração de dados continua bloqueada pelas dez ocorrências.
+- SQLite operacional preservado; nenhuma interface, fórmula, motor, API ou executável foi adaptado.
+
 ## Próximo marco
 
-Revisar os dados duplicados/tensões e decidir o mínimo de `AC_INPUT` e a política de fabricantes homônimos. Depois, confirmar a versão do MySQL e preparar/validar DDL e migração em ambiente de teste; não executar a etapa seguinte automaticamente.
+Resolver as dez ocorrências informadas no relatório, repetir a simulação sem erros e então carregar/verificar o novo plano no schema MySQL isolado já validado. Não iniciar a Etapa 04 automaticamente.

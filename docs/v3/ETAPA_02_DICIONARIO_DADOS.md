@@ -24,7 +24,7 @@ erDiagram
     INVERTER ||--o{ INVERTER_BATTERY : possui
     INVERTER ||--o{ INVERTER_SYSTEM : classifica
     INVERTER ||--o{ INVERTER_COMMUNICATION : oferece
-    INVERTER_OUTPUT_MODE ||--o{ INVERTER_AC_PROFILE : caracteriza_saidas
+    INVERTER_OUTPUT_MODE o|--o{ INVERTER_AC_PROFILE : caracteriza_saidas
 ```
 
 São **nove tabelas de domínio**: `manufacturer`, `inverter`, `mppt`, `module`, `inverter_ac_profile`, `inverter_battery`, `inverter_system`, `inverter_communication` e `inverter_output_mode`. Tabelas futuras de auditoria, migração ou jobs são metadados técnicos e não entram nessa contagem.
@@ -35,9 +35,10 @@ São **nove tabelas de domínio**: `manufacturer`, `inverter`, `mppt`, `module`,
 | --- | --- | --- | --- |
 | `ID` | `INT UNSIGNED` PK AI | não | Identidade. |
 | `NAME` | `VARCHAR(150)` | não | Nome preservado para exibição; comparação normalizada. |
+| `NAME_NORMALIZED` | `VARCHAR(150)` gerada | não | Trim/compactação de espaços; chave única com collation case/accent-insensitive. |
 | `CATEGORY` | `TINYINT UNSIGNED` | não / `0` | `CHECK (CATEGORY IN (0,1,2))`: inversor, módulo ou ambos. |
 
-Índice de busca em `NAME`. Exclusão `RESTRICT` se houver equipamentos. A política final de nomes homônimos de fabricantes continua uma decisão de negócio.
+`NAME_NORMALIZED` é uma coluna gerada que remove espaços externos e reduz espaços internos repetidos; seu índice único usa `utf8mb4_0900_ai_ci`, portanto ignora caixa e acentos. A grafia de `NAME` é preservada. A unicidade é global, independentemente da categoria; colisões exigem resolução explícita, nunca mesclagem automática. Exclusão é `RESTRICT` se houver equipamentos.
 
 ## 2. `inverter`
 
@@ -45,6 +46,7 @@ São **nove tabelas de domínio**: `manufacturer`, `inverter`, `mppt`, `module`,
 | --- | --- | --- | --- |
 | `ID` | `INT UNSIGNED` PK AI | não | Identidade. |
 | `MODEL` | `VARCHAR(255)` | não | Modelo comercial. |
+| `MODEL_NORMALIZED` | `VARCHAR(255)` gerada | não | Chave técnica normalizada usada com fabricante na unicidade. |
 | `MANUFACTURER_ID` | `INT UNSIGNED` FK | não | Fabricante; exclusão `RESTRICT`. |
 | `DIM_WIDTH`, `DIM_HEIGHT`, `DIM_DEPTH` | `DECIMAL(10,2)` | sim / `NULL` | mm; descritivos. |
 | `DIM_WEIGHT` | `DECIMAL(10,2)` | sim / `NULL` | kg; descritivo. |
@@ -60,7 +62,7 @@ São **nove tabelas de domínio**: `manufacturer`, `inverter`, `mppt`, `module`,
 | `ACTIVE` | `BOOLEAN` | não / `FALSE` | Disponibilidade no catálogo/matriz. |
 | `ROW_VERSION` | `INT UNSIGNED` | não / `1` | Concorrência otimista. |
 
-As cinco grandezas CA legadas saem do pai e migram para um perfil `AC_OUTPUT` padrão. Índices em fabricante/modelo e `ACTIVE`; `UNIQUE(MANUFACTURER_ID, MODEL)` após normalização aprovada e conferência do legado. A conferência atual não encontrou duplicatas.
+As cinco grandezas CA legadas saem do pai e originam um ou dois perfis `AC_OUTPUT`, conforme os modos confirmados. Casos multimodo permanecem inativos e sem padrão até revisão; casos unívocos podem receber o padrão quando cumprem os mínimos. Índices em fabricante/modelo e `ACTIVE`; `UNIQUE(MANUFACTURER_ID, MODEL_NORMALIZED)` materializa a regra aprovada. A conferência atual não encontrou duplicatas.
 
 Inativar o inversor não inativa nem apaga seus filhos: o principal pode consultar e simular equipamento inativo com dados válidos. A matriz exige equipamento ativo.
 
@@ -89,6 +91,7 @@ Inativar o inversor não inativa nem apaga seus filhos: o principal pode consult
 | --- | --- | --- | --- |
 | `ID` | `INT UNSIGNED` PK AI | não | Identidade. |
 | `MODEL` | `VARCHAR(255)` | não | Modelo comercial. |
+| `MODEL_NORMALIZED` | `VARCHAR(255)` gerada | não | Chave técnica normalizada usada com fabricante na unicidade. |
 | `MANUFACTURER_ID` | `INT UNSIGNED` FK | não | Fabricante; exclusão `RESTRICT`. |
 | `DIM_WIDTH`, `DIM_HEIGHT`, `DIM_DEPTH`, `DIM_WEIGHT` | `DECIMAL(10,2)` | sim / `NULL` | Descritivos mecânicos. |
 | `WP` | `DECIMAL(12,2)` | sim / `NULL` | Potência nominal em Wp. |
@@ -120,6 +123,7 @@ Cada linha é um perfil elétrico coerente. Valores de linhas diferentes nunca s
 | `SWITCHING_TIME` | `DECIMAL(10,2)` | sim / `NULL` | ms; aplicável a EPS. Desconhecido não vira zero. |
 | `ACTIVE` | `BOOLEAN` | não / `FALSE` | Disponível para escolha/cálculo. |
 | `IS_DEFAULT` | `BOOLEAN` | não / `FALSE` | Perfil de saída inicialmente usado pelo motor. |
+| `DEFAULT_SLOT` | `TINYINT` gerada | sim | `1` somente para padrão; `NULL` nos demais, usada na unicidade condicional. |
 
 ### Aplicabilidade por tipo
 
@@ -133,7 +137,7 @@ Cada linha é um perfil elétrico coerente. Valores de linhas diferentes nunca s
 | `SWITCHING_TIME` | `NULL` | `NULL` | aplicável |
 | `IS_DEFAULT` | permitido | sempre `FALSE` | permitido |
 
-Índices em `INVERTER_ID`, `PROFILE_TYPE`, `OUTPUT_MODE_ID` e `(INVERTER_ID, ACTIVE)`. O banco garante o vocabulário e booleanos. Uma restrição/índice funcional deve garantir no máximo um perfil de saída padrão por inversor; a implementação MySQL será definida no DDL, pois unicidade condicional requer solução específica.
+Índices em `INVERTER_ID`, `PROFILE_TYPE`, `OUTPUT_MODE_ID` e `(INVERTER_ID, ACTIVE)`. O DDL 0001 usa a coluna gerada `DEFAULT_SLOT = CASE WHEN IS_DEFAULT THEN 1 ELSE NULL END` e `UNIQUE(INVERTER_ID, DEFAULT_SLOT)`: múltiplos `NULL` permitem vários perfis não padrão, enquanto um segundo padrão é rejeitado. `CHECK` impede padrão inativo ou `AC_INPUT`; a existência de exatamente um padrão para um conjunto pronto continua transacional no serviço.
 
 O serviço garante que o padrão esteja ativo, seja `AC_OUTPUT` ou `EPS_OUTPUT` e seja compatível com a classificação. On-grid/híbrido iniciam com `AC_OUTPUT`; off-grid inicia com `EPS_OUTPUT`. `AC_INPUT` nunca é padrão. Trocar o padrão e excluir/inativar o antigo ocorre na mesma transação. Um rascunho pode temporariamente não ter padrão, mas não está pronto para cálculo.
 
@@ -223,7 +227,7 @@ Esta tabela separa o que o motor atual realmente consome de dados apenas descrit
 | --- | --- |
 | Salvar rascunho de inversor | Identidade técnica do rascunho e `ROW_VERSION`; campos elétricos, grupos e padrão podem estar incompletos. **Proposta:** exigir modelo e fabricante apenas ao promover/salvar como item de catálogo, não em autosave temporário. |
 | Disponibilizar perfil de saída | Tipo de saída, inversor, `OUTPUT_MODE_ID`, potência nominal positiva, `ACTIVE=TRUE`; coerência da classificação. As duas referências de tensão e correntes são necessárias para filtros que as usem, mas não para a fórmula FV atual. |
-| Disponibilizar perfil `AC_INPUT` | Tipo, inversor e ao menos uma grandeza técnica que caracterize a entrada; `OUTPUT_MODE_ID=NULL`, `IS_DEFAULT=FALSE`. O conjunto mínimo exato é decisão de negócio. |
+| Disponibilizar perfil `AC_INPUT` | Inversor classificado como híbrido, `PROFILE_TYPE='AC_INPUT'`, `ACTIVE=TRUE`, `IS_DEFAULT=FALSE`, `OUTPUT_MODE_ID=NULL` e ao menos uma grandeza nominal positiva entre potência ativa, corrente, tensão fase–fase e tensão fase–neutro. A elegibilidade híbrida é validação de domínio entre tabelas. |
 | Calcular compatibilidade FV | Inversor; perfil de saída ativo escolhido/padrão com potência nominal positiva; sobrecarga cadastrada válida ou percentual de sessão; número de MPPTs/entradas; grupos MPPT válidos com entradas, faixas de tensão aplicáveis e limites de corrente necessários ao modo; módulo com `WP`, `VMPP`, `IMPP`, `VOC`, `ISC`, `COEF_VOC` e `COEF_ISC`; temperaturas/opções da sessão. `COEF_PMAX` é usado na tela principal para potência compensada, embora o motor de compatibilidade estruturado use potência nominal na potência DC exibida. |
 | Calcular ignorando corrente operacional | Mesmo conjunto, exceto que a ausência/limite de corrente operacional não bloqueia; curto-circuito, tensão, entradas, Full Load e sobrecarga continuam válidos. |
 | Usar na matriz | Todos os mínimos do cálculo, além de inversor, módulo e perfil ativos. |
@@ -304,11 +308,11 @@ Identidades persistidas permanecem estáveis; os rótulos são compartilhados po
 - Tensões nominais são explicitamente fase–fase e fase–neutro; não há tensão genérica nem derivação automática.
 - Rótulos aprovados são separados das identidades persistidas.
 
-## Ambiguidades de negócio restantes
+## Decisões físicas da Etapa 03 e revisões restantes
 
-1. Qual conjunto mínimo torna um perfil `AC_INPUT` disponível, já que ele não participa do cálculo FV atual? **Proposta:** exigir ao menos tensão nominal em uma referência ou corrente/potência nominal, além de tipo, inversor, atividade e `IS_DEFAULT=FALSE`; validar o conjunto exato antes do DDL.
-2. Nomes idênticos de fabricantes após normalização devem ser proibidos globalmente ou diferenciados por alguma identidade externa? **Proposta:** unicidade global do nome normalizado, com fluxo explícito de mesclagem/renomeação para exceções.
+- `utf8mb4_0900_ai_ci` torna as chaves normalizadas insensíveis a caixa e acentos; colunas geradas materializam trim/compactação de espaços e índices únicos protegem contra concorrência.
+- `DEFAULT_SLOT` gerado materializa a unicidade condicional do padrão.
+- Checks tratam explicitamente `NULL`, atividade, tipo, modo e mínimo local de `AC_INPUT`; elegibilidade híbrida, cobertura de grupos e troca de padrão permanecem no domínio/transação.
+- DDL versionado fica em `migrations/mysql/0001_initial.sql`; as nove tabelas de domínio são acompanhadas apenas pelos metadados técnicos de versão, execução, mapeamento e pendências. A Etapa 03 fixou `ROW_FORMAT=DYNAMIC`, página InnoDB mínima de 8 KiB e assinaturas do DDL e da estrutura física observada.
 
-Revisões de dados ainda necessárias: escolher o padrão dos 56 pares duplicados e classificar a tensão legada como fase–fase ou fase–neutro com evidência. Corrente total compartilhada de bateria continua uma extensão hipotética: nenhum caso concreto foi demonstrado; não se adiciona coluna sem fonte. A versão real do MySQL e a solução física para unicidade condicional do padrão são validações técnicas posteriores, não decisões de negócio reabertas.
-
-Após revisão dessas ambiguidades, o próximo marco é preparar DDL e plano de migração em ambiente de teste. Esta etapa não os executa.
+Continuam necessárias a escolha do padrão dos 56 pares, a classificação das tensões legadas e a correção/decisão sobre as ocorrências estruturais encontradas pela simulação, inclusive MPPT e classificação de sistema ausente. Corrente total compartilhada de bateria continua hipotética e não ganhou coluna. A validação física no schema MySQL isolado foi concluída; a carga dos dados reais permanece bloqueada pelas ocorrências relatadas.

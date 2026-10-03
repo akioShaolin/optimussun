@@ -12,9 +12,13 @@ venv/
 .venv/
 env/
 .env/
+.env
+.env.*
+!.env.example
 
 # Testes
 .pytest_cache/
+.test_tmp/
 .coverage
 coverage.xml
 htmlcov/
