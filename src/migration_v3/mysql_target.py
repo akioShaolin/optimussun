@@ -726,7 +726,11 @@ def _validate_plan(plan):
         minimum = row["MIN_OPERATING_TEMPERATURE"]
         maximum = row["MAX_OPERATING_TEMPERATURE"]
         if minimum is not None and maximum is not None and Decimal(str(minimum)) > Decimal(str(maximum)):
-            raise ValueError("Plano de importação possui faixa de temperatura invertida.")
+            signature = ("INVALID_TEMPERATURE_RANGE", "inverter", str(row["ID"]))
+            if signature not in reported_issues:
+                raise ValueError(
+                    "Plano de importação omite faixa de temperatura invertida."
+                )
         for field in ("MAX_EFFICIENCY", "EURO_EFFICIENCY"):
             value = row[field]
             if value is not None and Decimal(str(value)) > 100:
@@ -897,6 +901,14 @@ def _values_equal(actual, expected):
     return actual == expected
 
 
+def _mapping_rows_equal(actual_rows, expected_rows):
+    """Compare mappings independently of database collation ordering."""
+
+    return sorted(tuple(row) for row in actual_rows) == sorted(
+        tuple(row) for row in expected_rows
+    )
+
+
 def _table_mismatches(cursor, table, expected_rows):
     if not expected_rows:
         return []
@@ -965,7 +977,7 @@ def verify_plan(config, plan):
                     [(row["ENTITY_TYPE"], row["SOURCE_KEY"], row["TARGET_ID"], row["CONTENT_SHA256"])
                      for row in plan["mappings"]]
                 )
-                if actual_mappings != expected_mappings:
+                if not _mapping_rows_equal(actual_mappings, expected_mappings):
                     mismatches.append({"table": "migration_id_map", "reason": "CONTENT"})
                 cursor.execute(
                     "SELECT SEVERITY,ENTITY_TYPE,SOURCE_KEY,FIELD_NAME,REASON_CODE,DETAILS_JSON "

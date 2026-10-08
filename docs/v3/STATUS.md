@@ -1,14 +1,15 @@
 # Status — Optimus Sun v3
 
-Última atualização: 03/10/2026. Branch de trabalho: `feature/v3.0.0`. Última versão publicada: **v2.6.0**. A v3 ainda não é uma release e não houve corte operacional.
+Última atualização: 08/10/2026. Branch de trabalho: `feature/v3.0.0`. Última versão publicada: **v2.6.0**. A v3 ainda não é uma release e não houve corte operacional.
 
 | Etapa | Estado | Evidência / próxima condição |
 | --- | --- | --- |
 | 00 — diagnóstico e base | Concluída | [Diagnóstico local](DIAGNOSTICO.md), snapshot SQLite íntegro, baseline de 100 testes seguros. |
 | 01 — fluidez da matriz | Concluída e validada manualmente | [Medições antes/depois](ETAPA_01_MEDICOES.md), canvas virtual, barra por pares reais, cancelamento/fechamento testados e matriz 65×35 aprovada pelo usuário. |
 | 02 — inventário e proposta de schema | Consolidada e revisada pelo 02B; duas decisões fechadas na Etapa 03 | [Dicionário consolidado](ETAPA_02_DICIONARIO_DADOS.md), [conferências](ETAPA_02_CONFERENCIAS.md), [handoff](ETAPA_02_CONSOLIDACAO_2026-10-02.md) e [complemento 02B](ETAPA_02B_PERFIS_TENSOES_ROTULOS_2026-10-02.md). Revisões de dados continuam rastreadas. |
-| 03 — esquema e importador | DDL e integração MySQL validados; migração de dados bloqueada | [Guia](ETAPA_03_GUIA.md) e [relatório](ETAPA_03_RELATORIO.md). O schema isolado foi validado; faltam correção/decisão sobre dez ocorrências estruturais antes da carga. |
-| 04–09 | Não iniciadas | Não avançar antes de concluir e revisar o ensaio da Etapa 03. |
+| 03 — esquema e importador | Ensaio concluído no schema MySQL isolado | [Guia](ETAPA_03_GUIA.md) e [relatório](ETAPA_03_RELATORIO.md). Correções autorizadas aplicadas, simulação sem erros, carga verificada e repetição idempotente confirmada. |
+| 04 — núcleo de cálculos | Concluída | [Baseline](ETAPA_04_BASELINE.md) e [relatório](ETAPA_04_RELATORIO.md). Principal e matriz consomem o núcleo puro por adaptadores compatíveis. |
+| 05–09 | Não iniciadas | Aguardar revisão desta entrega e autorização explícita antes de iniciar a Etapa 05. |
 
 ## Escopo da etapa 00
 
@@ -25,7 +26,7 @@
 
 ## Pendências e decisões
 
-As duas decisões restantes foram aprovadas na Etapa 03: `AC_INPUT` ativo exige híbrido e ao menos uma grandeza nominal positiva; fabricante tem nome normalizado globalmente único. O DDL materializa normalização e padrão condicional. A validação física no MySQL real foi concluída. Permanecem as revisões de dados — padrão/tensões dos pares, inconsistências MPPT e classificação de sistema ausente.
+As duas decisões restantes foram aprovadas na Etapa 03: `AC_INPUT` ativo exige híbrido e ao menos uma grandeza nominal positiva; fabricante tem nome normalizado globalmente único. O DDL materializa normalização e padrão condicional. A validação física no MySQL real foi concluída. As inconsistências MPPT e a classificação ausente que bloqueavam a carga foram corrigidas com confirmação do usuário. Permanecem como pendências permitidas as classificações de tensão, a revisão dos perfis multimodo, três inversores sem grupos MPPT e a conferência futura das tensões de plena carga do `H3-PRO-15.0` em datasheet.
 
 Continuam acompanhadas, sem alteração nesta etapa, duas pendências da Etapa 01: a diferença percebida entre **Calcular** e **Recalcular** e o comportamento da rolagem vertical sobre tabela/barra vertical e horizontal sobre barra horizontal.
 
@@ -54,13 +55,26 @@ Continuam acompanhadas, sem alteração nesta etapa, duas pendências da Etapa 0
 ## Etapa 03 — esquema, importador e ensaio
 
 - Criados DDL 0001, importador por snapshot, simulação padrão, reconciliação estruturada, carga transacional, verificação e configuração `.env` segura.
-- Simulação leu 28 fabricantes, 313 inversores, 418 módulos, 317 MPPTs e produziu 369 perfis; hash operacional permaneceu `f467e8a234bca437ef7de807a4ca64d487ef842cfdcb9cac9185804df3b29188`.
-- Três grupos dos inversores 203/227 codificam posições além do total de MPPTs; 267/268 têm total ponderado divergente; 280/282 contêm três valores `-4` não reconhecidos como sentinela; 260 possui faixa Full Load invertida; e o perfil 275 do inversor 235 está ativo sem classificação de sistema. As dez ocorrências bloqueiam a carga. Pendências de tensão/multimodo continuam rastreadas sem descarte.
-- Dos 257 perfis inicialmente ativos/padrão, 256 atendem às regras completas de prontidão. Foram aprovados 50 testes de migração/configuração e 11 de 11 testes de integração MySQL. A regressão segura final com integração habilitada resultou em 141 aprovados, 23 ignorados por indisponibilidade de Tk/Tcl e 25 subtestes; nenhum teste MySQL ficou ignorado.
+- Corrigido o preflight para que `INVALID_TEMPERATURE_RANGE` registrado gere plano e relatório auditáveis; adulteração/ausência da ocorrência e toda carga com erros continuam recusadas.
+- Em 08/10/2026, as dez correções cadastrais confirmadas pelo usuário foram aplicadas em transação sobre oito linhas do SQLite. O backup anterior está em `.test_tmp/migration_v3/backups/optimus_sun-before-catalog-corrections-20261008.db`, íntegro, com SHA-256 `2efb2112ccb6fc206fcea4508c0ad43ba3389aae728adc38244bdaade6dd75ac`. O hash operacional mudou, como esperado, de `f467e8a234bca437ef7de807a4ca64d487ef842cfdcb9cac9185804df3b29188` para `d12c15cb337bfeac7b5afe405656ae538ade62ed2a6e5871a804724d2d04fc1a`.
+- Cobertura de MPPT e totais de entradas ficaram coerentes nos oito inversores; integridade e FKs permaneceram válidas. A repetição da correção alterou zero linhas. A diferença já existente de `MAX_SHORT_CIRCUIT_CURRENT` entre os grupos 228/229 foi preservada para conferência, sem inferência técnica.
+- A nova simulação leu 28 fabricantes, 313 inversores, 418 módulos e 317 MPPTs, gerou 369 perfis e terminou com zero erros. Os 257 perfis ativos/padrão agora atendem às regras de prontidão. Permanecem 484 pendências permitidas: 369 referências de tensão, 112 revisões multimodo e 3 inversores sem grupos MPPT.
+- Corrigida também a verificação de `migration_id_map`: o conteúdo agora é comparado independentemente da ordenação de collation do MySQL, sem deixar de detectar qualquer tupla alterada.
 - A validação autenticada confirmou MySQL 8.0.46 Community, `utf8mb4_0900_ai_ci`, modo estrito, página InnoDB de 16.384 bytes e row format `dynamic`. O schema isolado `optimus_sun_v3_test` foi criado com DDL SHA-256 `1afdfc9a2ac1aed3fbe9fe07ac99bbf443bcf2bf1dcef36f62eb47a2f60a3654` e estrutura física SHA-256 `91fd7725007ead0c410d3ec0cbfd4f770734954aa3922dacdf5fb987bd00e89e`.
-- A reaplicação do DDL foi reconhecida de forma idempotente, com as mesmas assinaturas. A tentativa de carregar o plano com dez erros foi recusada antes de qualquer `INSERT`. As nove tabelas de domínio e as três tabelas de metadados da migração permaneceram vazias; `schema_version` registra somente `0001`. Portanto, o DDL e as proteções foram validados, mas a migração de dados continua bloqueada pelas dez ocorrências.
-- SQLite operacional preservado; nenhuma interface, fórmula, motor, API ou executável foi adaptado.
+- O plano SHA-256 `1e2481aeb309b246dfd96236756711857accda2433b423ec23f31153aa9d28ad` foi carregado como execução 19. Verificação integral de contagens e conteúdo retornou correspondência; a repetição do mesmo plano retornou `ALREADY_COMPLETED` sem duplicação e uma segunda verificação também passou.
+- Validação final: 55 testes de migração/configuração aprovados; 8 testes MySQL aprovados e 3 ignorados porque o catálogo de ensaio agora está legitimamente preenchido; regressão segura com 143 aprovados, 26 ignorados e 25 subtestes; mais 5 testes somente leitura sobre o SQLite operacional aprovados.
+- Nenhuma interface, fórmula, motor, schema ou executável foi alterado. O SQLite foi modificado somente nas correções expressamente autorizadas.
+
+## Etapa 04 — núcleo compartilhado de cálculos
+
+- Criado `calculation_core`, independente de interface, banco e transporte, com contratos imutáveis para inversor, módulo, MPPT, perfil de saída, opções, resultados, limites e ocorrências estruturadas.
+- A seleção de perfil aceita escolha explícita ou um único padrão válido; `AC_INPUT`, perfil inativo, perfil de outro inversor e ausência de modo/potência são recusados sem heurística. Potências nominal/máxima/pico e tensões fase–fase/fase–neutro permanecem separadas.
+- A matriz passou a consumir o núcleo pela API pública v2 preservada. A aplicação principal usa um adaptador puro que conserva os campos, arredondamentos e limites exigidos por seus cartões e gráficos. `optimus_lib` mantém compatibilidade nominal sem duplicar fórmulas.
+- A baseline anterior à extração registrou 163 aprovados, 11 ignorados e 25 subtestes. A regressão final registrou 186 aprovados, 12 ignorados e 28 subtestes, além de compilação e cinco testes somente leitura do catálogo. Dos ignorados, 11 exigem ativação explícita da integração MySQL e um depende do Tk/Tcl ausente neste interpretador.
+- O modo que ignora corrente operacional não exige um limite operacional desconhecido; os demais limites continuam obrigatórios. Dados estruturais ausentes retornam `None` e ocorrências, sem aparentar compatibilidade zero.
+- O SQLite permaneceu inalterado nesta etapa, SHA-256 `d12c15cb337bfeac7b5afe405656ae538ade62ed2a6e5871a804724d2d04fc1a`. MySQL e migração não foram executados.
+- Permanecem documentadas as diferenças legadas entre o fechamento da matriz e a agregação do principal, inclusive a semântica antiga de ignorar plena carga. Nenhuma foi corrigida silenciosamente.
 
 ## Próximo marco
 
-Resolver as dez ocorrências informadas no relatório, repetir a simulação sem erros e então carregar/verificar o novo plano no schema MySQL isolado já validado. Não iniciar a Etapa 04 automaticamente.
+Revisar o encerramento da Etapa 04. A Etapa 05 poderá usar os contratos puros no servidor, mas API, filas, autenticação e acesso MySQL da aplicação não foram iniciados. Continuar acompanhando as 484 pendências permitidas e a conferência futura do `H3-PRO-15.0`. Não iniciar a Etapa 05 automaticamente; aguardar autorização explícita.

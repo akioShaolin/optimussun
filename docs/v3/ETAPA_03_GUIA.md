@@ -53,6 +53,10 @@ O plano inclui seu próprio `plan_sha256`, calculado sobre origem, decisões, ta
 mapeamentos, contagens e ocorrências. A validação rejeita remoção ou alteração de
 pendências, erros ou dados sem a correspondente mudança dessa assinatura. Um plano
 com erros continua gravado para auditoria, mas o subcomando de carga sempre o recusa.
+Isso inclui faixas invertidas de temperatura quando a ocorrência
+`INVALID_TEMPERATURE_RANGE` correspondente está registrada. Se a ocorrência exata
+for removida ou não existir, o preflight rejeita o plano em vez de produzir um
+diagnóstico falsamente completo.
 
 ## 4. Reconciliação manual
 
@@ -102,6 +106,7 @@ Carregue somente um plano sem erros estruturais:
 ```
 
 A carga de domínio, mapeamentos e pendências usa uma transação e um lock por schema. Falha faz rollback e libera o lock. Repetir exatamente snapshot+decisões só retorna `ALREADY_COMPLETED` depois de conferir novamente contagens, campos, mapeamentos, pendências e hash do plano; edição manual, decisões diferentes ou snapshot diferente são recusados.
+A comparação dos mapeamentos é independente da ordem devolvida pela collation do MySQL: as tuplas completas são normalizadas e ordenadas em Python antes da comparação, de modo que diferença de ordenação não seja confundida com diferença de conteúdo.
 
 O FK de `inverter_ac_profile.OUTPUT_MODE_ID` usa a ação padrão do MySQL
 (`NO ACTION`/`RESTRICT`). Ela não foi escrita explicitamente porque a mesma coluna

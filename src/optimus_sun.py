@@ -85,7 +85,6 @@
 import sqlite3
 import tkinter as tk
 import matplotlib.pyplot as plt
-import math
 import sys
 
 from contextlib import closing
@@ -97,17 +96,12 @@ from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
 from functools import partial
 from optimus_lib import (
-    compensacao_termica,
     formatar_tupla,
-    limite_strings_curto_circuito,
-    limite_strings_operacao,
-    limite_modulos_sobrecarga,
-    limites_modulos_serie,
-    minimo_valido,
     mppt_index_dec,
     validar,
     vv,
 )
+from compatibility.legacy_main import build_legacy_main_calculations
 from equipment_search import EquipmentSearchRepository
 from equipment_search_gui import EquipmentSearchPanel, SearchVisibilityController, format_selection_card
 from overload_control import OverloadSession, bind_overload_entry, valid_registered_percent
@@ -501,301 +495,28 @@ def carregar_dados(modelo, equipamento):
             overload_effective_text.set(f"Não calculado: {error}")
             return False
         
-# -------- Calculos dos Módulos --------
+# -------- Cálculos compartilhados --------
 
-        # Oculta a imagem do Optimus Sun quando os resultados são exibidos
+        # Oculta a imagem do Optimus Sun quando os resultados são exibidos.
         frame_img.pack_forget()
-
-        # Limpa os dados do módulo corrigidos
-        calculos_cc["mod"] = {}
-
-        # Calcula as correções térmicas das tensões e correntes do módulo
-        calculos_cc["mod"]["p_nom"] = mod_selec["WP"]
-        calculos_cc["mod"]["coef_pmax"] = mod_selec["COEF_PMAX"] / 100
-        calculos_cc["mod"]["coef_voc"] = mod_selec["COEF_VOC"] / 100
-        calculos_cc["mod"]["coef_isc"] = mod_selec["COEF_ISC"] / 100
-        calculos_cc["mod"]["p_min"], calculos_cc["mod"]["p_max"] = compensacao_termica(
-                                                                    calculos_cc["mod"]["coef_pmax"], 
-                                                                    calculos_cc["amb"]["t_cell_min"], 
-                                                                    calculos_cc["amb"]["t_cell_max"], 
-                                                                    mod_selec["WP"])
-        # Premissa: como o banco não possui coeficientes específicos de Vmpp e Impp,
-        # Vmpp usa COEF_VOC e Impp usa COEF_ISC como aproximações.
-        calculos_cc["mod"]["vmpp_min"], calculos_cc["mod"]["vmpp_max"] = compensacao_termica(
-                                                                    calculos_cc["mod"]["coef_voc"], 
-                                                                    calculos_cc["amb"]["t_cell_min"], 
-                                                                    calculos_cc["amb"]["t_cell_max"], 
-                                                                    mod_selec["VMPP"])
-        calculos_cc["mod"]["voc_min"], calculos_cc["mod"]["voc_max"] = compensacao_termica(
-                                                                    calculos_cc["mod"]["coef_voc"], 
-                                                                    calculos_cc["amb"]["t_cell_min"], 
-                                                                    calculos_cc["amb"]["t_cell_max"], 
-                                                                    mod_selec["VOC"])
-        calculos_cc["mod"]["isc_min"], calculos_cc["mod"]["isc_max"] = compensacao_termica(
-                                                                    calculos_cc["mod"]["coef_isc"],
-                                                                    calculos_cc["amb"]["t_cell_min"], 
-                                                                    calculos_cc["amb"]["t_cell_max"], 
-                                                                    mod_selec["ISC"])
-        calculos_cc["mod"]["impp_min"], calculos_cc["mod"]["impp_max"] = compensacao_termica(
-                                                                    calculos_cc["mod"]["coef_isc"], 
-                                                                    calculos_cc["amb"]["t_cell_min"], 
-                                                                    calculos_cc["amb"]["t_cell_max"], 
-                                                                    mod_selec["IMPP"]) 
-        
-        print(f"""
-            Módulo
-              
-            Vmpp Max: {calculos_cc["mod"]["vmpp_max"]:.2f}
-            Vmpp Min: {calculos_cc["mod"]["vmpp_min"]:.2f}
-            Voc Max: {calculos_cc["mod"]["voc_max"]:.2f}
-            Voc Min {calculos_cc["mod"]["voc_min"]:.2f}
-            Isc Max: {calculos_cc["mod"]["isc_max"]:.2f}
-            Isc Min: {calculos_cc["mod"]["isc_min"]:.2f}
-            Impp Max: {calculos_cc["mod"]["impp_max"]:.2f}
-            Impp Min: {calculos_cc["mod"]["impp_min"]:.2f}
-            """)
-        
-# -------- Calculos dos MPPTs --------
-        # Limpa a lista de MPPTs
-        calculos_cc["mppt"] = []
-        # Armazena as grandezas na variável de calculos
-        for i in range(len(inv_selec["MPPT"])):
-            mppt = inv_selec["MPPT"][i]
-
-            calculos_cc["mppt"].append({
-                "mppt_index": mppt["MPPT_INDEX"],
-                "n_in_mppt": mppt["NUMBER_OF_INPUTS"],
-                "max_i_v" : mppt["MAX_INPUT_VOLTAGE"],
-                "min_i_v" : mppt["MIN_STARTUP_VOLTAGE"],
-                "max_o_v" : mppt["MAX_OPERATING_VOLTAGE"],
-                "min_o_v" : mppt["MIN_OPERATING_VOLTAGE"],
-                "max_fl_v" : mppt["MAX_FULL_LOAD_VOLTAGE"],
-                "min_fl_v" : mppt["MIN_FULL_LOAD_VOLTAGE"],
-                "max_sc_i" : mppt["MAX_SHORT_CIRCUIT_CURRENT"],
-                "max_o_i" : mppt["MAX_OPERATING_CURRENT"],
-                # Inicializa os campos a serem calculados como None
-                "n_min_in": None,
-                "n_max_in": None,
-                "n_min_o": None,
-                "n_max_o": None,
-                "n_min_fl": None,
-                "n_max_fl": None,
-                "q_min_o": None,
-                "q_max_o": None,
-                "q_min_fl": None,
-                "q_max_fl": None,
-                "n_max_sc_mppt": None,
-                "n_max_o_mppt": None,
-                "q_s_mppt": None,
-                "n_mod_o_mppt": None,
-                "p_mod_o_mppt": None,
-                "n_mod_fl_mppt": None,
-                "p_mod_fl_mppt": None,    
-            })
-
-        for i in range(len(calculos_cc["mppt"])):
-
-            print(f"""
-            MPPT {formatar_tupla(mppt_index_dec(calculos_cc['mppt'][i]["mppt_index"]))}
-
-            Input Voltage Range: {calculos_cc["mppt"][i]["min_i_v"]:.2f}, {calculos_cc["mppt"][i]["max_i_v"]:.2f};
-            Operating Voltage Range: {calculos_cc["mppt"][i]["min_o_v"]:.2f}, {calculos_cc["mppt"][i]["max_o_v"]:.2f};
-            Full Load Voltage Range: {calculos_cc["mppt"][i]["min_fl_v"]:.2f}, {calculos_cc["mppt"][i]["max_fl_v"]:.2f};
-            Max Short Circuit Current: {calculos_cc["mppt"][i]["max_sc_i"]:.2f};
-            Max Operating Current:  {calculos_cc["mppt"][i]["max_o_i"]:.2f};
-
-                """)
-
-            # Calcular quantidades máximas de módulos e entradas do MPPT para compatibilidade entre equipamentos 
-            calculos_cc["mppt"][i]["n_max_sc_mppt"] = limite_strings_curto_circuito(
-                calculos_cc["mppt"][i]["max_sc_i"], calculos_cc["mod"]["isc_max"]
+        try:
+            shared_calculations = build_legacy_main_calculations(
+                inv_selec,
+                mod_selec,
+                minimum_cell_temperature_c=calculos_cc["amb"]["t_cell_min"],
+                maximum_cell_temperature_c=calculos_cc["amb"]["t_cell_max"],
+                operating_current_tolerance_fraction=calculos_cc["tol"]["op_i"],
+                power_tolerance_fraction=calculos_cc["tol"]["pot"],
+                effective_overload_fraction=effective_overload,
+                ignore_operating_current=flag_no_iop.get(),
+                ignore_full_load=flag_no_fl.get(),
             )
-            calculos_cc["mppt"][i]["n_max_o_mppt"] = limite_strings_operacao(
-                calculos_cc["mppt"][i]["max_o_i"],
-                calculos_cc["mod"]["impp_max"],
-                calculos_cc["tol"]["op_i"],
-            )
-            
-            # Variável temporária para calcular q_s_mppt, considerando ou não a corrente de operação
-            if flag_no_iop.get():
-                q_s_mppt = [
-                    calculos_cc["mppt"][i]["n_in_mppt"],
-                    calculos_cc["mppt"][i]["n_max_sc_mppt"],
-                ]
-            else:
-                q_s_mppt = [
-                    calculos_cc["mppt"][i]["n_in_mppt"],
-                    calculos_cc["mppt"][i]["n_max_sc_mppt"],
-                    calculos_cc["mppt"][i]["n_max_o_mppt"]
-                ]
+        except ValueError as error:
+            limpar_saidas()
+            overload_effective_text.set(f"Não calculado: {error}")
+            return False
 
-            calculos_cc["mppt"][i]["q_s_mppt"] = minimo_valido(q_s_mppt)
-
-            # Se o valor for 0, o programa nem perde tempo calculando as quantidades de módulos compatíveis
-            if (calculos_cc["mppt"][i]["q_s_mppt"] > 0 and vv(calculos_cc["mppt"][i]["q_s_mppt"])):
-                calculos_cc["mppt"][i]["n_min_in"], calculos_cc["mppt"][i]["n_max_in"] = limites_modulos_serie(
-                    calculos_cc["mppt"][i]["min_i_v"], calculos_cc["mppt"][i]["max_i_v"],
-                    calculos_cc["mod"]["voc_min"], calculos_cc["mod"]["voc_max"],
-                )
-                calculos_cc["mppt"][i]["n_min_o"], calculos_cc["mppt"][i]["n_max_o"] = limites_modulos_serie(
-                    calculos_cc["mppt"][i]["min_o_v"], calculos_cc["mppt"][i]["max_o_v"],
-                    calculos_cc["mod"]["vmpp_min"], calculos_cc["mod"]["vmpp_max"],
-                )
-                calculos_cc["mppt"][i]["n_min_fl"], calculos_cc["mppt"][i]["n_max_fl"] = limites_modulos_serie(
-                    calculos_cc["mppt"][i]["min_fl_v"], calculos_cc["mppt"][i]["max_fl_v"],
-                    calculos_cc["mod"]["vmpp_min"], calculos_cc["mod"]["vmpp_max"],
-                )
-
-            else:
-                calculos_cc["mppt"][i]["n_min_in"] = 0
-                calculos_cc["mppt"][i]["n_max_in"] = 0
-                calculos_cc["mppt"][i]["n_min_o"] = 0
-                calculos_cc["mppt"][i]["n_max_o"] = 0
-                calculos_cc["mppt"][i]["n_min_fl"] = 0
-                calculos_cc["mppt"][i]["n_max_fl"] = 0
-
-            if vv(calculos_cc["mppt"][i]["n_min_in"], calculos_cc["mppt"][i]["n_min_o"], calculos_cc["mppt"][i]["n_max_in"], calculos_cc["mppt"][i]["n_max_o"]):
-                calculos_cc["mppt"][i]["q_min_o"] = max(calculos_cc["mppt"][i]["n_min_in"], calculos_cc["mppt"][i]["n_min_o"])
-                calculos_cc["mppt"][i]["q_max_o"] = min(calculos_cc["mppt"][i]["n_max_in"], calculos_cc["mppt"][i]["n_max_o"])
-                calculos_cc["mppt"][i]["n_mod_o_mppt"] = calculos_cc["mppt"][i]["q_max_o"] * calculos_cc["mppt"][i]["q_s_mppt"]
-                calculos_cc["mppt"][i]["p_mod_o_mppt"] = calculos_cc["mppt"][i]["n_mod_o_mppt"] * calculos_cc["mod"]["p_nom"] / 1000
-            else:
-                calculos_cc["mppt"][i]["q_min_o"] = -1
-                calculos_cc["mppt"][i]["q_max_o"] = -1
-                calculos_cc["mppt"][i]["n_mod_o_mppt"] = -1
-                calculos_cc["mppt"][i]["p_mod_o_mppt"] = -1
-            
-            if vv(calculos_cc["mppt"][i]["q_min_o"], calculos_cc["mppt"][i]["q_max_o"], calculos_cc["mppt"][i]["n_min_fl"], calculos_cc["mppt"][i]["n_max_fl"]):
-                calculos_cc["mppt"][i]["q_min_fl"] = max(calculos_cc["mppt"][i]["n_min_in"], calculos_cc["mppt"][i]["n_min_o"], calculos_cc["mppt"][i]["n_min_fl"])
-                calculos_cc["mppt"][i]["q_max_fl"] = min(calculos_cc["mppt"][i]["n_max_in"], calculos_cc["mppt"][i]["n_max_o"], calculos_cc["mppt"][i]["n_max_fl"])
-                calculos_cc["mppt"][i]["n_mod_fl_mppt"] = calculos_cc["mppt"][i]["q_max_fl"] * calculos_cc["mppt"][i]["q_s_mppt"]
-                calculos_cc["mppt"][i]["p_mod_fl_mppt"] = calculos_cc["mppt"][i]["n_mod_fl_mppt"] * calculos_cc["mod"]["p_nom"] / 1000   
-    
-            else:
-                calculos_cc["mppt"][i]["q_min_fl"] = -1
-                calculos_cc["mppt"][i]["q_max_fl"] = -1
-                calculos_cc["mppt"][i]["n_mod_fl_mppt"] = -1
-                calculos_cc["mppt"][i]["p_mod_fl_mppt"] = -1
-
-            print(f"""
-            Quantidade máxima de séries por MPPT: {calculos_cc["mppt"][i]["q_s_mppt"]}
-            Quantidade mínima de módulos por string: {calculos_cc["mppt"][i]["q_min_o"]}
-            Quantidade máxima de módulos por string: {calculos_cc["mppt"][i]["q_max_o"]}
-            Quantidade mínima de módulos em Carga máxima: {calculos_cc["mppt"][i]["q_min_fl"]}
-            Quantidade máxima de módulos em Carga máxima: {calculos_cc["mppt"][i]["q_max_fl"]}
-            """)
-
-# -------- Calculos do Inversor --------
-        calculos_cc["inv"] = {}
-        calculos_cc["inv"]["n_tr"] = inv_selec["NUMBER_OF_TRACKERS"]
-        # O cadastro e a entrada da GUI estão em percentual de acréscimo; a
-        # função matemática recebe a fração (50% -> 0,5), convertida uma vez.
-        calculos_cc["inv"]["sb"] = effective_overload
-        calculos_cc["inv"]["pn"] = inv_selec["RATED_ACTIVE_POWER"]
-        calculos_cc["inv"]["n_in"] = inv_selec["NUMBER_OF_INPUTS"]
-        calculos_cc["inv"]["n_tr"] = inv_selec["NUMBER_OF_TRACKERS"]
-
-        for i in range(len(calculos_cc["mppt"])):
-            mppt = calculos_cc["mppt"][i]
-
-            if mppt["mppt_index"] == 0:
-                if vv(calculos_cc["mppt"][i]["n_max_in"], calculos_cc["inv"]["n_tr"], calculos_cc["mppt"][i]["q_s_mppt"]):
-                    calculos_cc["inv"]["n_max_in"] = calculos_cc["mppt"][i]["n_max_in"] * calculos_cc["inv"]["n_tr"] * calculos_cc["mppt"][i]["q_s_mppt"]
-                else:
-                    calculos_cc["inv"]["n_max_in"] = -1
-
-                if vv(calculos_cc["mppt"][i]["n_max_o"], calculos_cc["inv"]["n_tr"], calculos_cc["mppt"][i]["q_s_mppt"]):
-                    calculos_cc["inv"]["n_max_o"] = calculos_cc["mppt"][i]["n_max_o"] * calculos_cc["inv"]["n_tr"] * calculos_cc["mppt"][i]["q_s_mppt"]
-                else:
-                    calculos_cc["inv"]["n_max_o"] = -1
-                    
-                if vv(calculos_cc["mppt"][i]["n_max_fl"], calculos_cc["inv"]["n_tr"], calculos_cc["mppt"][i]["q_s_mppt"]):
-                    calculos_cc["inv"]["n_max_fl"] = calculos_cc["mppt"][i]["n_max_fl"] * calculos_cc["inv"]["n_tr"] * calculos_cc["mppt"][i]["q_s_mppt"]
-                else:
-                    calculos_cc["inv"]["n_max_fl"] = -1
-
-            # Trata de inversores com dois ou mais MPPTs diferentes
-            else:
-                qtd_mppt = len(mppt_index_dec(calculos_cc["mppt"][i]['mppt_index']))
-
-                if vv(calculos_cc["mppt"][i]["n_max_in"], calculos_cc["mppt"][i]["q_s_mppt"]):
-                    if calculos_cc["inv"].get("n_max_in") != -1:
-                        calculos_cc["inv"]["n_max_in"] = calculos_cc["inv"].get("n_max_in", 0) + calculos_cc["mppt"][i]["n_max_in"] * qtd_mppt * calculos_cc["mppt"][i]["q_s_mppt"]
-                    else:
-                        calculos_cc["inv"]["n_max_in"] = -1
-                else:
-                    calculos_cc["inv"]["n_max_in"] = -1
-
-                if vv(calculos_cc["mppt"][i]["n_max_o"], calculos_cc["mppt"][i]["q_s_mppt"]):
-                    if calculos_cc["inv"].get("n_max_o") != -1:
-                        calculos_cc["inv"]["n_max_o"] = calculos_cc["inv"].get("n_max_o", 0) + calculos_cc["mppt"][i]["n_max_o"] * qtd_mppt * calculos_cc["mppt"][i]["q_s_mppt"]
-                    else:
-                        calculos_cc["inv"]["n_max_o"] = -1                
-                else:
-                    calculos_cc["inv"]["n_max_o"] = -1
-                    
-                if vv(calculos_cc["mppt"][i]["n_max_fl"], calculos_cc["mppt"][i]["q_s_mppt"]):
-                    if calculos_cc["inv"].get("n_max_fl") != -1:
-                        calculos_cc["inv"]["n_max_fl"] = calculos_cc["inv"].get("n_max_fl", 0) + calculos_cc["mppt"][i]["n_max_fl"] * qtd_mppt * calculos_cc["mppt"][i]["q_s_mppt"]
-                    else:
-                        calculos_cc["inv"]["n_max_fl"] = -1  
-                else:
-                    calculos_cc["inv"]["n_max_fl"] = -1
-
-        calculos_cc["inv"]["n_max_sb"] = limite_modulos_sobrecarga(
-            calculos_cc["inv"].get("pn"),
-            calculos_cc["inv"].get("sb"),
-            calculos_cc["tol"].get("pot"),
-            calculos_cc["mod"].get("p_nom"),
-        )
-
-        if flag_no_fl.get():
-            q_max_o = [
-                calculos_cc["inv"]["n_max_in"],
-                calculos_cc["inv"]["n_max_sb"]
-            ]
-        else:
-            q_max_o = [
-                calculos_cc["inv"]["n_max_in"],
-                calculos_cc["inv"]["n_max_o"],
-                calculos_cc["inv"]["n_max_sb"]
-            ]
-
-        if [v for v in q_max_o if v != -1 and v is not None]:
-            calculos_cc["inv"]["q_max_o"] = min(q_max_o)
-        else:
-            calculos_cc["inv"]["q_max_o"] = -1
-
-        if vv(calculos_cc["inv"]["q_max_o"]):
-            calculos_cc["inv"]["p_max_sb_o"] = round(calculos_cc["mod"]["p_nom"] * calculos_cc["inv"]["q_max_o"] / 1000, 1)
-            calculos_cc["inv"]["p_max_sb_o_per"] = math.trunc((calculos_cc["inv"]["p_max_sb_o"] * 1000 - calculos_cc["inv"]["pn"]) * 100 / calculos_cc["inv"]["pn"])
-        else:
-            calculos_cc["inv"]["p_max_sb_o"] = -1
-            calculos_cc["inv"]["p_max_sb_o_per"] = -1
-
-        q_max_fl = [
-            calculos_cc["inv"]["n_max_in"],
-            calculos_cc["inv"]["n_max_o"],
-            calculos_cc["inv"]["n_max_fl"],
-            calculos_cc["inv"]["n_max_sb"]
-        ]
-
-        # Filtra apenas os que são válidos (≠ -1 e ≠ None)
-        if [v for v in q_max_fl if v != -1 and v is not None]:
-            print(q_max_fl)
-            calculos_cc["inv"]["q_max_fl"] = min(q_max_fl)
-        else:
-            calculos_cc["inv"]["q_max_fl"] = -1
-
-        # Calculo das potências
-        
-        if vv(calculos_cc["inv"]["q_max_fl"]):
-            calculos_cc["inv"]["p_max_sb_fl"] = round(calculos_cc["mod"]["p_nom"] * calculos_cc["inv"]["q_max_fl"] / 1000, 1)
-            calculos_cc["inv"]["p_max_sb_fl_per"] = math.trunc((calculos_cc["inv"]["p_max_sb_fl"] * 1000 - calculos_cc["inv"]["pn"]) * 100 / calculos_cc["inv"]["pn"])
-        else:
-            calculos_cc["inv"]["p_max_sb_fl"] = -1
-            calculos_cc["inv"]["p_max_sb_fl_per"] = -1
-                    
+        calculos_cc.update(shared_calculations)
         overload_effective_text.set(
             f"Valor efetivamente usado no cálculo: {overload_session.effective_percent():g}%"
         )

@@ -1,12 +1,15 @@
 import copy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import migration_v3.cli as migration_cli
 import migration_v3.mysql_target as mysql_target
 from migration_v3.mysql_target import (
     _canonical_structure_sha256,
+    _mapping_rows_equal,
     _plan_sha256,
     _validate_plan,
     connect,
@@ -79,9 +82,50 @@ def build(source, decisions=None):
     }, decisions or {}, "c" * 64)
 
 
+def run_simulation(monkeypatch, tmp_path, source):
+    source_path = tmp_path / "source.db"
+    source_path.write_bytes(b"fixture")
+    output = tmp_path / "simulation"
+    source_meta = {
+        "source_id": "fixture-source",
+        "source_path": str(source_path),
+        "source_sha256": "a" * 64,
+        "snapshot_path": str(output / "optimus_sun.snapshot.db"),
+        "snapshot_sha256": "b" * 64,
+    }
+
+    def create_snapshot(_source, snapshot):
+        Path(snapshot).write_bytes(b"snapshot")
+        return source_meta
+
+    monkeypatch.setattr(migration_cli, "create_snapshot", create_snapshot)
+    monkeypatch.setattr(migration_cli, "read_snapshot", lambda _snapshot: source)
+    monkeypatch.setattr(migration_cli, "sha256_file", lambda _path: "a" * 64)
+    args = SimpleNamespace(
+        output=str(output), source=str(source_path), reconciliation=None,
+        write_reconciliation_template=False,
+    )
+    return migration_cli.command_simulate(args), output
+
+
 def test_normalization_contract():
     assert collapse_spaces("  WEG   Energia ") == "WEG Energia"
     assert normalized_key(" Árvore  SOLAR ") == normalized_key("arvore solar")
+
+
+def test_mapping_comparison_is_independent_of_database_collation_order():
+    mappings = [
+        ("ac_profile", "1:SINGLE_PHASE", 1, "a" * 64),
+        ("ac_profile", "10:THREE_PHASE", 10, "b" * 64),
+        ("ac_profile", "100:THREE_PHASE", 100, "c" * 64),
+    ]
+    mysql_collation_order = [mappings[0], mappings[1], mappings[2]]
+    python_order = [mappings[2], mappings[1], mappings[0]]
+
+    assert _mapping_rows_equal(mysql_collation_order, python_order)
+    changed = list(python_order)
+    changed[0] = (*changed[0][:-1], "d" * 64)
+    assert not _mapping_rows_equal(mysql_collation_order, changed)
 
 
 def test_one_mode_creates_ready_default_and_preserves_unclassified_voltage():
@@ -430,6 +474,64 @@ def test_normalized_equipment_collision_is_reported_before_load():
     assert any(issue["reason_code"] == "NORMALIZED_MODEL_COLLISION"
                for issue in plan["issues"])
     assert plan["counts"]["errors"] >= 1
+    assert _validate_plan(plan)
+
+
+def test_inverted_temperature_generates_auditable_plan_and_report(monkeypatch, tmp_path):
+    item = inverter(1)
+    item["MIN_OPERATING_TEMPERATURE"] = 70
+    source = source_for([item], [(1, "SINGLE_PHASE")])
+
+    exit_code, output = run_simulation(monkeypatch, tmp_path, source)
+
+    assert exit_code == 2
+    plan_path = output / "import-plan.json"
+    report_path = output / "report.md"
+    assert plan_path.is_file()
+    assert report_path.is_file()
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert plan["counts"]["errors"] == 1
+    assert any(issue["reason_code"] == "INVALID_TEMPERATURE_RANGE"
+               for issue in plan["issues"])
+    assert "INVALID_TEMPERATURE_RANGE" in report_path.read_text(encoding="utf-8")
+    assert _validate_plan(plan)
+
+
+def test_inverted_temperature_plan_is_rejected_before_connection(monkeypatch):
+    item = inverter(1)
+    item["MIN_OPERATING_TEMPERATURE"] = 70
+    plan = build(source_for([item], [(1, "SINGLE_PHASE")]))
+
+    def unexpected_connection(*_args, **_kwargs):
+        raise AssertionError("load_plan não deve abrir conexão para plano com erros")
+
+    monkeypatch.setattr(mysql_target, "connect", unexpected_connection)
+    with pytest.raises(RuntimeError, match="erros estruturais"):
+        mysql_target.load_plan({"database": "fixture_test"}, plan)
+
+
+def test_inverted_temperature_without_matching_issue_is_rejected():
+    item = inverter(1)
+    item["MIN_OPERATING_TEMPERATURE"] = 70
+    plan = build(source_for([item], [(1, "SINGLE_PHASE")]))
+    plan["issues"] = [issue for issue in plan["issues"]
+                      if issue["reason_code"] != "INVALID_TEMPERATURE_RANGE"]
+    plan["counts"]["errors"] -= 1
+    plan["plan_sha256"] = _plan_sha256(plan)
+
+    with pytest.raises(ValueError, match="omite faixa de temperatura invertida"):
+        _validate_plan(plan)
+
+
+def test_valid_temperature_simulation_still_generates_loadable_plan(monkeypatch, tmp_path):
+    source = source_for([inverter(1)], [(1, "SINGLE_PHASE")])
+
+    exit_code, output = run_simulation(monkeypatch, tmp_path, source)
+
+    assert exit_code == 0
+    plan = json.loads((output / "import-plan.json").read_text(encoding="utf-8"))
+    assert plan["counts"]["errors"] == 0
+    assert (output / "report.md").is_file()
     assert _validate_plan(plan)
 
 
